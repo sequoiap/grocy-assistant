@@ -1,0 +1,8 @@
+{$GA_DOMAIN} {
+	encode zstd gzip
+	# Receipt photos are uploaded here; allow a few at once.
+	request_body {
+		max_size 100MB
+	}
+	reverse_proxy grocy-assistant:8080
+}

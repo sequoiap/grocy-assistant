@@ -1,0 +1,24 @@
+# Minimal setup: the app alone on port 8080 (plain HTTP).
+#
+# Phones only allow camera access over HTTPS, so put something that terminates
+# TLS in front of it. Ready-made examples:
+#   deploy/caddy/      - Caddy reverse proxy with automatic certificates
+#   deploy/tailscale/  - private HTTPS on your tailnet via Tailscale Serve
+# If you already run a reverse proxy, point it at this container's port 8080.
+services:
+  grocy-assistant:
+    build: .
+    image: grocy-assistant
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - grocy_assistant_data:/data
+    environment:
+      # Required: the address of your Grocy, as reachable from inside this
+      # container (not "localhost" unless Grocy shares its network).
+      GA_GROCY_URL: ${GA_GROCY_URL:?set GA_GROCY_URL to the address of your Grocy, e.g. in .env}
+      GA_SECRET_KEY: ${GA_SECRET_KEY:-}
+
+volumes:
+  grocy_assistant_data:

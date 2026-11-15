@@ -1,0 +1,39 @@
+# Grocy Assistant behind Caddy, which obtains and renews the TLS certificate.
+#
+#   cd deploy/caddy
+#   GA_DOMAIN=groceries.example.com GA_GROCY_URL=https://grocy.example.com docker compose up -d --build
+#
+# Public domain: point its DNS at this host and open ports 80/443; Caddy does the rest.
+# LAN-only name (e.g. groceries.home.arpa): add `tls internal` to the Caddyfile and
+# install Caddy's root certificate on each phone, or use the Tailscale example instead.
+services:
+  grocy-assistant:
+    build: ../..
+    image: grocy-assistant
+    restart: unless-stopped
+    volumes:
+      - grocy_assistant_data:/data
+    environment:
+      # Required: the address of your Grocy, as reachable from inside this
+      # container (not "localhost" unless Grocy shares its network).
+      GA_GROCY_URL: ${GA_GROCY_URL:?set GA_GROCY_URL to the address of your Grocy, e.g. in .env}
+      GA_SECRET_KEY: ${GA_SECRET_KEY:-}
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      GA_DOMAIN: ${GA_DOMAIN:?set GA_DOMAIN to the hostname to serve}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+  grocy_assistant_data:

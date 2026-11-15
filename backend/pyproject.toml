@@ -1,0 +1,47 @@
+[project]
+name = "grocy-assistant"
+version = "0.1.0"
+description = "Scan barcodes, snap receipts, and let Grocy do the bookkeeping."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "cryptography>=43",
+    "python-multipart>=0.0.12",
+    "rapidfuzz>=3.10",
+    "pillow>=11",
+    "numpy>=2",
+    "opencv-python-headless>=4.10",
+    "rapidocr>=3.0",
+    "onnxruntime>=1.20",
+    "anthropic>=0.40",
+    "openai>=1.55",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["slow: runs the real OCR engine on rendered images"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.uv]
+package = false
