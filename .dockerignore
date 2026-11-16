@@ -8,3 +8,4 @@ backend/app/static
 backend/tests
 data
 .git
+docs
