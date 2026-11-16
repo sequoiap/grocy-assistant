@@ -60,12 +60,19 @@ def find_api_key(page: str, key_id: str) -> str | None:
 class WebSession:
     """One Grocy web session, held in `http`'s cookie jar."""
 
-    def __init__(self, base_url: str, http: httpx.AsyncClient):
+    def __init__(
+        self, base_url: str, http: httpx.AsyncClient, headers: dict[str, str] | None = None
+    ):
         self._base = base_url
         self._http = http
+        # Sent with every request. For a Grocy behind a single-sign-on proxy this is
+        # the proxy's user header, which then stands in for the login (no cookie).
+        self._headers = headers or {}
 
     async def _send(self, method: str, path: str, **kwargs) -> httpx.Response:
         kwargs.setdefault("follow_redirects", False)
+        if self._headers:
+            kwargs["headers"] = {**self._headers, **kwargs.get("headers", {})}
         try:
             resp = await self._http.request(method, f"{self._base}{path}", **kwargs)
         except httpx.HTTPError as exc:
@@ -82,8 +89,7 @@ class WebSession:
         form = {"username": username, "password": password}
         resp = await self._send("POST", "/login", data=form)
         if resp.status_code == 500:
-            # A freshly installed Grocy fails this until its start page was loaded once.
-            await self._send("GET", "/", follow_redirects=True)
+            await self.load_start_page()
             resp = await self._send("POST", "/login", data=form)
         if resp.status_code >= 500:
             raise GrocyError(
@@ -94,6 +100,19 @@ class WebSession:
             raise ApiKeyRequired("no login form at this address", signed_in=False)
         if "invalid=true" in resp.headers.get("location", ""):
             raise BadCredentials()
+        data = await self.current_user()
+        if data is None:
+            raise ApiKeyRequired("the login didn't produce a session", signed_in=False)
+        return data
+
+    async def load_start_page(self) -> None:
+        """A freshly installed Grocy creates its database on the first page load, and
+        fails everything else until then."""
+        await self._send("GET", "/", follow_redirects=True)
+
+    async def current_user(self) -> dict | None:
+        """Grocy's record of whoever this session is signed in as, or None if Grocy
+        doesn't recognize it as signed in."""
         who = await self._send("GET", "/api/user", headers={"Accept": "application/json"})
         try:
             data = who.json() if who.status_code == 200 else None
@@ -102,7 +121,7 @@ class WebSession:
         if isinstance(data, list):
             data = data[0] if data else None
         if not isinstance(data, dict) or data.get("id") is None:
-            raise ApiKeyRequired("the login didn't produce a session", signed_in=False)
+            return None
         return data
 
     async def mint_api_key(self) -> str:

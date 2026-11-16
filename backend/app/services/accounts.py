@@ -96,20 +96,56 @@ async def sign_in_with_password(
         web = WebSession(base, login_http)
         try:
             who = await web.login(username, password)
-            grocy_user_id = int(who["id"])
-            user = _by_grocy_id(db, grocy_user_id)
-            api_key = decrypt(user.grocy_api_key_enc) if user else None
-            if api_key and not await _key_is_for(GrocyClient(base, api_key, http), grocy_user_id):
-                api_key = None
-            if api_key is None:
-                api_key = await web.mint_api_key()
-                # An admin's key page shows everyone's keys; never trust the pick blindly.
-                if not await _key_is_for(GrocyClient(base, api_key, http), grocy_user_id):
-                    raise ApiKeyRequired("the key read back isn't this user's", signed_in=True)
-                log.info("Created a Grocy API key for %s", who.get("username"))
+            user, api_key = await _key_for(db, http, web, who)
         finally:
             await web.logout()
     return await _remember(db, http, who, api_key, user)
+
+
+async def sign_in_from_proxy(
+    db: Session,
+    http: httpx.AsyncClient,
+    new_login_http: Callable[[], httpx.AsyncClient],
+    header: str,
+    username: str,
+) -> User:
+    """Sign in the person a single-sign-on proxy in front of both this app and Grocy
+    says is making the request (GA_TRUSTED_USER_HEADER). Grocy is asked with that same
+    header, so it is Grocy that decides who `username` is, exactly as it does for
+    its own pages; the app then holds an API key for them like after any sign-in.
+
+    Raises ApiKeyRequired (signed_in=False when Grocy doesn't accept the header) or
+    GrocyError."""
+    async with new_login_http() as login_http:
+        web = WebSession(get_config().grocy_base, login_http, headers={header: username})
+        who = await web.current_user()
+        if who is None:
+            await web.load_start_page()
+            who = await web.current_user()
+        if who is None:
+            raise ApiKeyRequired("Grocy didn't accept the proxy's user header", signed_in=False)
+        user, api_key = await _key_for(db, http, web, who)
+    return await _remember(db, http, who, api_key, user)
+
+
+async def _key_for(
+    db: Session, http: httpx.AsyncClient, web: WebSession, who: dict
+) -> tuple[User | None, str]:
+    """The app's user row for `who` (if any) and a Grocy API key that works for them:
+    the one already stored if Grocy still accepts it, else one minted through `web`,
+    which must be signed in to Grocy as `who`."""
+    base = get_config().grocy_base
+    grocy_user_id = int(who["id"])
+    user = _by_grocy_id(db, grocy_user_id)
+    api_key = decrypt(user.grocy_api_key_enc) if user else None
+    if api_key and await _key_is_for(GrocyClient(base, api_key, http), grocy_user_id):
+        return user, api_key
+    api_key = await web.mint_api_key()
+    # An admin's key page shows everyone's keys; never trust the pick blindly.
+    if not await _key_is_for(GrocyClient(base, api_key, http), grocy_user_id):
+        raise ApiKeyRequired("the key read back isn't this user's", signed_in=True)
+    log.info("Created a Grocy API key for %s", who.get("username"))
+    return user, api_key
 
 
 async def sign_in_with_api_key(db: Session, http: httpx.AsyncClient, api_key: str) -> User:

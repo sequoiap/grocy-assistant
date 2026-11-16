@@ -25,6 +25,14 @@ class Config(BaseSettings):
     # Required. The Grocy everyone signs in to, e.g. https://grocy.example.com or
     # https://example.com/grocy. Must be reachable from where this app runs.
     grocy_url: str = ""
+    # For a Grocy behind a single-sign-on proxy (Grocy's ReverseProxyAuthMiddleware):
+    # the request header, e.g. X-Authentik-Username or Remote-User, in which that
+    # proxy names the signed-in person. When set, a request carrying it is signed in
+    # as that Grocy user with no sign-in screen, and the header is passed on to Grocy
+    # under the same name to get them an API key. Only set this if every request
+    # reaches the app through that proxy and the proxy overwrites the header: whoever
+    # can send it directly can sign in as anyone.
+    trusted_user_header: str = ""
     # Used to encrypt stored Grocy/AI API keys. Generated into data_dir if unset.
     secret_key: str | None = None
     # "auto" marks the session cookie Secure whenever the request arrived over HTTPS
@@ -47,6 +55,10 @@ class Config(BaseSettings):
         if not url.startswith(("http://", "https://")):
             url = "http://" + url
         return url.removesuffix("/api").rstrip("/")
+
+    @property
+    def trusted_header(self) -> str | None:
+        return self.trusted_user_header.strip() or None
 
     @property
     def db_path(self) -> Path:
