@@ -1,0 +1,120 @@
+# Builds the Docker image for amd64 and arm64, each on a runner of that
+# architecture, so nothing is emulated and the OCR warm-up in the Dockerfile runs
+# on real hardware of both kinds. Called by ci.yml (build only) and by
+# release.yml (push: true), which also pushes the result to ghcr.io and tags it.
+name: Image
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push the image to ghcr.io and tag it for the pushed version tag
+        type: boolean
+        default: false
+
+# No `permissions:` here: a called workflow gets what the calling job grants and
+# cannot ask for more. ci.yml grants read-only; release.yml adds `packages: write`.
+
+env:
+  IMAGE: ghcr.io/sequoiap/grocy-assistant
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: inputs.push
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # The OCI labels: source, version, revision, created, title, description, ...
+      - uses: docker/metadata-action@v6
+        id: meta
+        if: inputs.push
+        with:
+          images: ${{ env.IMAGE }}
+          tags: type=semver,pattern={{version}}
+      - uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Pushed untagged; the manifest job below gives both platforms their tags
+          # in one step, so a tag never points at a half-published release.
+          outputs: ${{ inputs.push && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          # Only main writes the cache: every branch, pull request and tag can read
+          # main's cache, while one written from a tag or a pull request is of no
+          # use to later runs and would only count against the repository's 10 GB.
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=image-{0}', matrix.arch) || '' }}
+      - name: Record the image digest
+        if: inputs.push
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: inputs.push
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: Tag the multi-platform image
+    if: inputs.push
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # v1.2.3 is tagged 1.2.3, 1.2 and latest. A pre-release such as v1.2.3-rc.1
+      # is tagged 1.2.3-rc.1 only: metadata-action leaves `latest` and the minor
+      # tag alone for pre-releases, so they keep pointing at the last full release.
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Combine the platforms under the release tags
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          while read -r tag; do args+=(--tag "$tag"); done <<<"$TAGS"
+          for digest in *; do args+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${args[@]}"
+      - name: Show what was published
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"

@@ -1,0 +1,23 @@
+# Runs on every push to main and every pull request: the checks, and a build of
+# the Docker image (not pushed) so a broken Dockerfile shows up before a release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  image:
+    uses: ./.github/workflows/image.yml

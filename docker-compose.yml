@@ -1,5 +1,9 @@
 # Minimal setup: the app alone on port 8080 (plain HTTP).
 #
+#   docker compose up -d                           run the published image
+#   docker compose pull && docker compose up -d    update to the newest release
+#   docker compose up -d --build                   build from this checkout instead
+#
 # Phones only allow camera access over HTTPS, so put something that terminates
 # TLS in front of it. Ready-made examples:
 #   deploy/caddy/      - Caddy reverse proxy with automatic certificates
@@ -7,8 +11,10 @@
 # If you already run a reverse proxy, point it at this container's port 8080.
 services:
   grocy-assistant:
+    # Published for amd64 and arm64 with every release. To stay on one release,
+    # replace "latest" with its version, e.g. 0.1.0 (or 0.1 for the newest 0.1.x).
+    image: ghcr.io/sequoiap/grocy-assistant:latest
     build: .
-    image: grocy-assistant
     restart: unless-stopped
     ports:
       - "8080:8080"

@@ -1,15 +1,20 @@
 # Grocy Assistant behind Caddy, which obtains and renews the TLS certificate.
 #
 #   cd deploy/caddy
-#   GA_DOMAIN=groceries.example.com GA_GROCY_URL=https://grocy.example.com docker compose up -d --build
+#   GA_DOMAIN=groceries.example.com GA_GROCY_URL=https://grocy.example.com docker compose up -d
+#
+# That runs the published image; add --build to build from this checkout instead.
+# To update to the newest release: docker compose pull && docker compose up -d
 #
 # Public domain: point its DNS at this host and open ports 80/443; Caddy does the rest.
 # LAN-only name (e.g. groceries.home.arpa): add `tls internal` to the Caddyfile and
 # install Caddy's root certificate on each phone, or use the Tailscale example instead.
 services:
   grocy-assistant:
+    # Published for amd64 and arm64 with every release. To stay on one release,
+    # replace "latest" with its version, e.g. 0.1.0 (or 0.1 for the newest 0.1.x).
+    image: ghcr.io/sequoiap/grocy-assistant:latest
     build: ../..
-    image: grocy-assistant
     restart: unless-stopped
     volumes:
       - grocy_assistant_data:/data

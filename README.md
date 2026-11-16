@@ -63,34 +63,100 @@ If your Grocy doesn't use its own login form (LDAP or reverse-proxy
 authentication), choose *Use a Grocy API key instead* on the sign-in screen and
 paste a key from Grocy's wrench menu → *Manage API keys* → *Add*.
 
-## Running it
+## Installing with Docker
 
-You need Docker and a reachable Grocy (4.x; developed against 4.7).
+You need:
 
-Phones only allow camera access over **HTTPS**, so the app is meant to sit behind
-something that terminates TLS. The app itself serves plain HTTP on port 8080.
-Pick whichever fits:
+- Docker with the Compose plugin, on a machine that is `linux/amd64` or
+  `linux/arm64` (a Raspberry Pi 4 or 5 or an ARM NAS is fine).
+- A Grocy the machine can reach (4.x; developed against 4.7).
+- A way to serve the app over **HTTPS**. Phones only allow camera access over
+  HTTPS, and the app itself speaks plain HTTP on port 8080, so something in front
+  of it has to terminate TLS. Step 3 has ready-made options.
 
-| Setup | Use |
+### 1. Create the compose file
+
+In a new folder, save this as `docker-compose.yml`, with your own Grocy address:
+
+```yaml
+services:
+  grocy-assistant:
+    image: ghcr.io/sequoiap/grocy-assistant:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - grocy_assistant_data:/data
+    environment:
+      GA_GROCY_URL: https://grocy.example.com
+
+volumes:
+  grocy_assistant_data:
+```
+
+`GA_GROCY_URL` is the one setting you must provide, and it has to be the address
+of Grocy **as seen from inside the container**:
+
+| Where Grocy runs | `GA_GROCY_URL` |
 | --- | --- |
-| You already run a reverse proxy | `docker compose up -d --build`, then proxy to port 8080 |
-| Caddy with automatic certificates | [`deploy/caddy`](deploy/caddy/docker-compose.yml) |
-| Private HTTPS on your tailnet | [`deploy/tailscale`](deploy/tailscale/docker-compose.yml) |
+| Another machine, or behind its own domain | That address, e.g. `https://grocy.example.com` or `http://192.168.1.20:9283` |
+| A container in the same compose file or Docker network | The service name and the port it listens on inside the network, e.g. `http://grocy:80` |
+| The same host, on a published port | `http://host.docker.internal:9283`, and add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service |
 
-Each compose file has its steps in the comments at the top. The one thing you
-must set is **`GA_GROCY_URL`**, the address of your Grocy as seen from inside the
-container (so not `localhost`, unless Grocy shares the container's network). Put
-it in a `.env` file next to the compose file; see [`.env.example`](.env.example).
-Then open the app and sign in with your Grocy account. On a phone, use the
-browser's *Add to Home Screen* to install it.
+`localhost` will not work: inside the container it means the container itself.
 
 The Grocy address is deliberately not editable from the app: people type their
 Grocy password into it, so where that password is sent should only be changeable
 by whoever controls the server.
 
-Data (trips, receipt photos, what the matcher has learned) lives in the
-`grocy_assistant_data` volume. Stored Grocy and AI keys are encrypted with a key
-kept in that same volume, or with `GA_SECRET_KEY` if you set one.
+### 2. Start it
+
+```sh
+docker compose up -d
+docker compose logs -f grocy-assistant    # Ctrl-C to stop watching
+```
+
+The log ends with `Uvicorn running on http://0.0.0.0:8080` once it is up, and
+`docker compose ps` shows the container as `healthy` after about half a minute.
+If `GA_GROCY_URL` is missing, the container stops with a one-line message saying
+so. From a computer you can already open `http://<host>:8080` and sign in, but
+scanning with a phone needs the next step.
+
+### 3. Put HTTPS in front of it
+
+| Setup | What to do |
+| --- | --- |
+| You already run a reverse proxy (nginx, Traefik, Caddy, …) | Proxy a hostname to port 8080. Allow request bodies of about 100 MB (a long receipt can be several photos in one upload); no WebSocket support is needed. |
+| Caddy with automatic certificates | Use [`deploy/caddy`](deploy/caddy/docker-compose.yml) instead of the file above: it runs the app and Caddy together. |
+| Private HTTPS on your tailnet | Use [`deploy/tailscale`](deploy/tailscale/docker-compose.yml) instead: the app is reachable only from your Tailscale devices. |
+
+The Caddy and Tailscale setups need the files in those folders, so clone this
+repository (or download the folder) and follow the steps in the comments at the
+top of each compose file. They take `GA_GROCY_URL` from a `.env` file next to the
+compose file; see [`.env.example`](.env.example).
+
+### 4. Sign in and install it on your phone
+
+Open the HTTPS address and sign in with your **Grocy** username and password
+(see [Accounts](#accounts)). On a phone, open the same address in the browser and
+choose *Add to Home Screen* (iOS: the Share menu in Safari; Android: the browser
+menu) to install it as an app. Allow camera access when it asks.
+
+### Updating and other housekeeping
+
+- **Updating:** `docker compose pull && docker compose up -d`. An installed
+  phone app offers the new version the next time it is opened.
+- **Staying on one release:** change `latest` in the compose file to a version
+  such as `0.1.0`, or `0.1` for the newest 0.1.x. Versions are listed under
+  [Releases](https://github.com/sequoiap/grocy-assistant/releases).
+- **Your data** (trips, receipt photos, what the matcher has learned) lives in
+  the `grocy_assistant_data` volume, which is what to back up. Stored Grocy and
+  AI keys are encrypted with a key kept in that same volume, or with
+  `GA_SECRET_KEY` if you set one. If you mount a host folder at `/data` instead
+  of the volume, it must be writable by user id 1000.
+- **Building from source:** the compose files in this repository also carry a
+  `build:` line, so in a checkout `docker compose up -d --build` builds the image
+  from your working copy instead of pulling it.
 
 ### Configuration
 
@@ -137,6 +203,29 @@ backend/app/
 frontend/src/   the PWA
 deploy/         Caddy and Tailscale compose examples
 ```
+
+## Releasing
+
+The version is recorded in several files; `scripts/version.py` writes all of them.
+
+```sh
+python3 scripts/version.py set 0.2.0
+git commit -am "Release 0.2.0"
+git push origin main          # wait for CI to pass
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+Pushing the tag starts the [release workflow](.github/workflows/release.yml). It
+stops if the tag and the version in the code disagree, runs the checks, builds
+the image for amd64 and arm64, pushes it to `ghcr.io/sequoiap/grocy-assistant`
+tagged `0.2.0`, `0.2` and `latest`, and creates the GitHub Release. Waiting for
+CI on `main` first also makes the release quicker: it reuses the image layers
+that CI run built.
+
+A pre-release (`set 0.2.0-rc.1`, tag `v0.2.0-rc.1`) is published as `0.2.0-rc.1`
+only: `0.2` and `latest` stay where they are, and the GitHub Release is marked
+as a pre-release.
 
 ## Status and known limits
 
