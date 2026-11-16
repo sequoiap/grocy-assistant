@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.ai.base import AIError
 from app.receipts.pipeline import parse_text
 
-from .conftest import ALEX, GROCY, SAM, jpeg_bytes, sign_in
+from .conftest import ALEX, SAM, jpeg_bytes, sign_in
 from .receipts import samples
 from .test_api_flow import wait_until_read
 
@@ -34,14 +34,12 @@ def test_settings_for_admins_and_everyone_else(client, grocy):
     alex, sam = household(client)
     empty = {**NO_AI, "api_key_set": False}
     assert alex.get("/api/settings").json() == {
-        "grocy_url": GROCY,
         "personal_ai": empty,
         "instance_ai": empty,
         "ai_source": "none",
     }
     # Everyone can read their settings; the household default is the admins' business.
     assert sam.get("/api/settings").json() == {
-        "grocy_url": GROCY,
         "personal_ai": empty,
         "instance_ai": None,
         "ai_source": "none",

@@ -54,7 +54,6 @@ class AISettingsIn(BaseModel):
 
 
 class SettingsOut(BaseModel):
-    grocy_url: str  # display only; set with GA_GROCY_URL
     # This user's own override; provider "none" = use the household default.
     personal_ai: AISettingsOut
     # The household default; null unless the caller is an admin.

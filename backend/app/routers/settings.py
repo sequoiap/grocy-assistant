@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from ..ai import build_provider
 from ..ai.base import AIConfig, AIError
-from ..config import get_config
 from ..db import get_db
 from ..deps import current_user, fresh_user, get_http, require_admin
 from ..grocy.client import GrocyError
@@ -26,7 +25,6 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 def _settings_out(db: Session, user: User) -> SettingsOut:
     return SettingsOut(
-        grocy_url=get_config().grocy_base,
         personal_ai=personal_ai_out(user),
         instance_ai=instance_ai_out(db) if user.is_admin else None,
         ai_source=resolve_ai(db, user).source,

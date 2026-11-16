@@ -49,7 +49,7 @@
         >{#if user && user.display_name && user.display_name !== user.username}&nbsp;({user.username}){/if}{#if user?.is_admin}, a Grocy admin{/if}
       </span>
     </p>
-    <GrocyConnection grocyUrl={settings?.grocy_url ?? null} />
+    <GrocyConnection />
   </section>
 
   {#if settingsError}

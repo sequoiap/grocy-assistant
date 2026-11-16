@@ -49,8 +49,6 @@ export interface AISettingsIn {
 export type AIScope = 'personal' | 'instance';
 
 export interface SettingsOut {
-  /** Fixed by the server's configuration; display only. */
-  grocy_url: string;
   /** This person's own override; provider "none" means "use the household default". */
   personal_ai: AISettingsOut;
   /** The household default; null unless the caller is an admin. */

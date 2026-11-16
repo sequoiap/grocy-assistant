@@ -516,8 +516,9 @@ def test_app_refuses_to_start_without_a_grocy_url(tmp_path, value):
     assert not (tmp_path / "data").exists()  # and it didn't touch the disk first
 
 
-def test_grocy_url_is_normalized_and_shown_in_settings(authed):
-    assert authed.get("/api/settings").json()["grocy_url"] == GROCY
+def test_the_grocy_address_is_not_sent_to_the_browser(authed):
+    # It is server configuration, often an internal address, and nobody can change it.
+    assert "grocy_url" not in authed.get("/api/settings").json()
 
 
 @pytest.mark.parametrize(
