@@ -100,8 +100,8 @@ of Grocy **as seen from inside the container**:
 | Where Grocy runs | `GA_GROCY_URL` |
 | --- | --- |
 | Another machine, or behind its own domain | That address, e.g. `https://grocy.example.com` or `http://192.168.1.20:9283` |
-| A container in the same compose file or Docker network | The service name and the port it listens on inside the network, e.g. `http://grocy:80` |
-| The same host, on a published port | `http://host.docker.internal:9283`, and add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service |
+| A container in the same compose file, or on a Docker network both share | The service name and the port it listens on inside the network, e.g. `http://grocy:80` |
+| The same host, on a published port | `http://host.docker.internal:9283`, and add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service. This needs Grocy's port published on all interfaces, not only on `127.0.0.1`. |
 
 `localhost` will not work: inside the container it means the container itself.
 
@@ -117,7 +117,7 @@ docker compose logs -f grocy-assistant    # Ctrl-C to stop watching
 ```
 
 The log ends with `Uvicorn running on http://0.0.0.0:8080` once it is up, and
-`docker compose ps` shows the container as `healthy` after about half a minute.
+`docker compose ps` shows the container as `healthy` within half a minute.
 If `GA_GROCY_URL` is missing, the container stops with a one-line message saying
 so. From a computer you can already open `http://<host>:8080` and sign in, but
 scanning with a phone needs the next step.
