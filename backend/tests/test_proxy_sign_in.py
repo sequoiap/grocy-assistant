@@ -110,15 +110,15 @@ def test_a_proxied_request_signs_in_without_a_sign_in_screen(proxied, grocy):
     r = proxied.get(ME, headers=as_user("alex"))
     assert r.status_code == 200, r.text
     me = {"id": 1, "username": "alex", "display_name": "Alex Doe", "is_admin": True}
-    assert r.json() == me
+    assert r.json() == {**me, "via_proxy": True}
     (minted,) = grocy.keys_of(1, MINTED)
 
     # The session cookie carries on from here; the header needn't be on every request.
-    assert proxied.get(ME).json() == me
+    assert proxied.get(ME).json() == {**me, "via_proxy": False}
     assert proxied.post("/api/trips", json={}).status_code == 201
 
     # Another device signed in by the proxy reuses the key instead of minting one more.
-    assert device(proxied).get(ME, headers=as_user("alex")).json() == me
+    assert device(proxied).get(ME, headers=as_user("alex")).json()["username"] == "alex"
     assert grocy.keys_of(1, MINTED) == [minted]
     assert grocy.count("GET", "/manageapikeys/new") == 1
 
@@ -262,3 +262,47 @@ def test_the_proxy_header_is_never_sent_alongside_an_api_key(proxied, grocy):
     proxied.post("/api/trips", json={})
     assert grocy.proxy_header_on_key_request == []
     assert grocy.cookie_on_key_request == []
+
+
+# --- what the page needs to know -------------------------------------------------
+
+
+def test_the_page_is_told_whether_a_proxy_signs_people_in(client, monkeypatch):
+    assert client.get("/api/status").json()["single_sign_on"] is False
+    from app import config
+
+    monkeypatch.setenv("GA_TRUSTED_USER_HEADER", HEADER)
+    monkeypatch.setenv("GA_TRUSTED_PROXIES", PROXY)
+    config.get_config.cache_clear()
+    assert client.get("/api/status").json()["single_sign_on"] is True
+
+
+def test_the_page_is_told_when_signing_out_would_be_undone(proxied, grocy):
+    assert proxied.get(ME, headers=as_user("alex")).json()["via_proxy"] is True
+    # The same browser on a request the proxy didn't name anyone on.
+    assert proxied.get(ME).json()["via_proxy"] is False
+
+    # Signed in with a pasted key instead, from a device that doesn't come through
+    # the proxy: signing out means something there, whatever header it sends.
+    direct = device(proxied, ELSEWHERE)
+    direct.post("/api/auth/login", json={"api_key": "sams-own-key"})
+    assert direct.get(ME, headers=as_user("sam")).json()["via_proxy"] is False
+
+
+@pytest.mark.parametrize(
+    ("asked_for", "sent_to"),
+    [
+        ("/trips/3/review", "/trips/3/review"),
+        ("/login?next=%2Ftrips%2F3", "/login?next=%2Ftrips%2F3"),
+        (None, "/"),
+        ("https://elsewhere.example/", "/"),
+        ("//elsewhere.example/", "/"),
+        ("/\\elsewhere.example/", "/"),
+        ("trips", "/"),
+    ],
+)
+def test_the_page_load_through_the_proxy_only_leads_back_into_the_app(client, asked_for, sent_to):
+    params = {} if asked_for is None else {"next": asked_for}
+    r = client.get("/api/auth/through-proxy", params=params, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == sent_to
+    assert r.headers["cache-control"] == "no-store"

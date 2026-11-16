@@ -39,7 +39,7 @@ async def current_user(
 ) -> User:
     session = find_session(db, request.cookies.get(SESSION_COOKIE))
     header = get_config().trusted_header
-    proxied = _proxy_user(request, header) if header else ""
+    proxied = proxy_user(request)
     if proxied and (
         session is None or session.ended_reason is not None or session.user.username != proxied
     ):
@@ -63,10 +63,11 @@ async def current_user(
     return session.user
 
 
-def _proxy_user(request: Request, header: str) -> str:
-    """Who the single-sign-on proxy says is making this request; "" if it doesn't say,
-    or if what says so isn't the proxy."""
-    values = request.headers.getlist(header)
+def proxy_user(request: Request) -> str:
+    """Who the single-sign-on proxy says is making this request; "" if there is no
+    such proxy, it doesn't say, or what says so isn't the proxy."""
+    header = get_config().trusted_header
+    values = request.headers.getlist(header) if header else []
     if not values:
         return ""
     peer = request.client.host if request.client else None

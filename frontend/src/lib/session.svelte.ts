@@ -1,4 +1,4 @@
-import { api, ApiError, errorMessage } from './api';
+import { api, ApiError, errorMessage, isProxySignIn } from './api';
 import type { GrocyMeta, StatusOut, UserOut } from './types';
 
 // The reason Grocy signed someone out has to outlive the trip page it happened
@@ -6,6 +6,19 @@ import type { GrocyMeta, StatusOut, UserOut } from './types';
 const NOTICE_KEY = 'grocy-assistant.signin-notice';
 /** How often an open, visible app asks whether it is still signed in. */
 const HEARTBEAT_MS = 20000;
+
+// When this browser was last sent off to the single-sign-on proxy by itself.
+const SENT_KEY = 'grocy-assistant.sent-through-proxy';
+/** Not twice within this long: if the first trip didn't help, a second won't, and the person should see why. */
+const SEND_AGAIN_AFTER_MS = 60000;
+
+function sentRecently(): boolean {
+  try {
+    return Date.now() - Number(sessionStorage.getItem(SENT_KEY) ?? 0) < SEND_AGAIN_AFTER_MS;
+  } catch {
+    return true; // can't remember having been: don't risk going round in circles
+  }
+}
 
 function savedNotice(): string | null {
   try {
@@ -24,6 +37,12 @@ class Session {
   bootError = $state<string | null>(null);
   /** Why the server signed the person out, to show on the sign-in screen. */
   notice = $state<string | null>(savedNotice());
+  /**
+   * A single-sign-on proxy in front of the app wants the person to sign in there
+   * before it lets anything through. Nothing works until they have.
+   */
+  proxyWantsSignIn = $state(false);
+  #goWhenVisible = false;
 
   async boot(): Promise<void> {
     this.bootError = null;
@@ -36,10 +55,38 @@ class Session {
         this.user = null;
       }
     } catch (err) {
-      this.bootError = errorMessage(err);
+      // That one has a screen of its own (stoppedByProxy).
+      if (!isProxySignIn(err)) this.bootError = errorMessage(err);
     } finally {
       this.ready = true;
     }
+  }
+
+  /**
+   * A request was answered by the proxy's sign-in page, not by the server. The
+   * person has to be taken there, which only a real page load can do.
+   */
+  stoppedByProxy(): void {
+    if (this.proxyWantsSignIn) return;
+    this.proxyWantsSignIn = true;
+    if (sentRecently()) return; // just been, and it didn't help: leave it to the button
+    if (document.visibilityState === 'visible') this.goThroughProxy();
+    else this.#goWhenVisible = true;
+  }
+
+  /**
+   * Load a page the phone doesn't have cached, so the proxy gets to see the
+   * browser: it shows its sign-in if it wants one, and the server then sends the
+   * browser back to where it was.
+   */
+  goThroughProxy(): void {
+    try {
+      sessionStorage.setItem(SENT_KEY, String(Date.now()));
+    } catch {
+      /* private mode: stoppedByProxy then leaves it to the button */
+    }
+    const here = location.pathname + location.search;
+    location.assign(`/api/auth/through-proxy?next=${encodeURIComponent(here)}`);
   }
 
   signedIn(user: UserOut): void {
@@ -55,6 +102,21 @@ class Session {
     if (reason) this.setNotice(reason);
     if (this.user) this.user = null;
     meta.clear();
+  }
+
+  /**
+   * Grocy rejected the person's key and the server signed them out. Behind a
+   * single-sign-on proxy the server signs them straight back in when asked, with
+   * a new key, so nobody needs to hear about it. Resolves true if that worked.
+   */
+  async signInAgain(): Promise<boolean> {
+    if (!this.status?.single_sign_on || !this.user) return false;
+    try {
+      this.user = await api.me();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   setNotice(message: string | null): void {
@@ -75,11 +137,21 @@ class Session {
    */
   watch(): () => void {
     const check = async () => {
-      if (!this.user || document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') return;
+      if (this.proxyWantsSignIn) {
+        // Found out while the app was in the background; go now that someone is looking.
+        if (this.#goWhenVisible) this.goThroughProxy();
+        this.#goWhenVisible = false;
+        return;
+      }
+      if (!this.user) return;
       try {
         const me = await api.me();
         const now = this.user;
-        if (now && (me.is_admin !== now.is_admin || me.display_name !== now.display_name)) this.user = me;
+        const changed =
+          now &&
+          (me.is_admin !== now.is_admin || me.display_name !== now.display_name || me.via_proxy !== now.via_proxy);
+        if (changed) this.user = me;
       } catch (err) {
         // A reason from Grocy has already reached ended() through the app-wide
         // handler; this covers a session that simply expired. Anything else

@@ -121,6 +121,10 @@ turning it on:
   image does. Otherwise the address the app checks can be one taken from
   `X-Forwarded-For` instead of the one that actually connected.
 
+In the app, someone the proxy signed in has no *Sign out* button, and when the
+proxy's own session runs out the app sends the browser to the proxy's sign-in
+page and brings it back to where it was.
+
 If the sign-in screen appears although you came through the proxy, the app's log
 says which address it ignored the header from.
 

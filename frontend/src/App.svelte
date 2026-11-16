@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isAccountInvalid, onUnauthorized } from './lib/api';
+  import { isAccountInvalid, onAccountInvalid, onProxySignIn, onUnauthorized } from './lib/api';
   import { installRouter, match, navigate, router } from './lib/router.svelte';
   import { session } from './lib/session.svelte';
   import { network, viewport } from './lib/ui.svelte';
@@ -12,6 +12,7 @@
   import Settings from './routes/Settings.svelte';
   import TripPage from './trip/TripPage.svelte';
   import BootError from './routes/BootError.svelte';
+  import ProxySignIn from './routes/ProxySignIn.svelte';
   import NotFound from './routes/NotFound.svelte';
 
   const route = $derived(match(router.path));
@@ -21,13 +22,15 @@
     // An expired session drops to the sign-in screen quietly. When Grocy has
     // rejected the account, the server's reason goes along to be shown there.
     onUnauthorized((err) => session.ended(isAccountInvalid(err) ? err.message : null));
+    onAccountInvalid(() => session.signInAgain());
+    onProxySignIn(() => session.stoppedByProxy());
     void session.boot();
     return () => cleanups.forEach((c) => c());
   });
 
   // The only question is whether someone is signed in. Returns a path to redirect to, or null.
   const redirect = $derived.by((): string | null => {
-    if (!session.ready || session.bootError) return null;
+    if (!session.ready || session.bootError || session.proxyWantsSignIn) return null;
     const name = route.name;
     if (!session.user) {
       if (name === 'login') return null;
@@ -51,7 +54,9 @@
   <OfflineBanner />
 {/if}
 
-{#if !session.ready}
+{#if session.proxyWantsSignIn}
+  <ProxySignIn />
+{:else if !session.ready}
   <div class="splash" aria-busy="true" aria-label="Loading"></div>
 {:else if session.bootError}
   <BootError message={session.bootError} />
