@@ -39,7 +39,7 @@ async def current_user(
 ) -> User:
     session = find_session(db, request.cookies.get(SESSION_COOKIE))
     header = get_config().trusted_header
-    proxied = (request.headers.get(header) or "").strip() if header else ""
+    proxied = _proxy_user(request, header) if header else ""
     if proxied and (
         session is None or session.ended_reason is not None or session.user.username != proxied
     ):
@@ -61,6 +61,49 @@ async def current_user(
         raise account_invalid()
     note_seen(session.user_id)
     return session.user
+
+
+def _proxy_user(request: Request, header: str) -> str:
+    """Who the single-sign-on proxy says is making this request; "" if it doesn't say,
+    or if what says so isn't the proxy."""
+    values = request.headers.getlist(header)
+    if not values:
+        return ""
+    peer = request.client.host if request.client else None
+    if not get_config().is_trusted_proxy(peer):
+        # Anyone can type a header. Only the proxy's own connections are believed.
+        _warn_once(
+            f"peer {peer}",
+            "Ignoring %s on a request from %s, which is not in GA_TRUSTED_PROXIES",
+            header,
+            peer,
+        )
+        return ""
+    if len(values) != 1:
+        # A proxy that adds its header next to one the browser sent, instead of
+        # replacing it. Grocy refuses these as well.
+        _warn_once(
+            "repeated",
+            "Ignoring %s: it arrived %d times. The proxy has to replace this header, not add to it",
+            header,
+            len(values),
+        )
+        return ""
+    return values[0].strip()
+
+
+_warned: set[str] = set()
+
+
+def _warn_once(about: str, message: str, *args: object) -> None:
+    """These would otherwise be logged for every request of a misconfigured setup."""
+    if about not in _warned and len(_warned) < 50:
+        _warned.add(about)
+        log.warning(message, *args)
+
+
+def reset_warnings() -> None:
+    _warned.clear()
 
 
 async def _sign_in_from_proxy(

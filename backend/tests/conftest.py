@@ -61,7 +61,9 @@ class FakeGrocy:
         self.login_form = True  # False: sign-in is handled by something in front of Grocy
         self.mint_broken = False  # the "new API key" UI route is gone
         # Set: Grocy runs ReverseProxyAuthMiddleware and trusts this header to name the
-        # user, creating unknown ones, as Grocy 4.7.1 does (API keys still win on /api).
+        # user. Behaves as Grocy 4.7.1 does: API keys still win on /api, a name it
+        # hasn't seen becomes a new admin, and a request with neither a live key nor
+        # the header is not a 401 but a 500.
         self.proxy_header: str | None = None
         self.proxy_header_on_key_request: list[str] = []  # API-key requests that carried it
         self.requests: list[tuple[str, str]] = []  # (method, path) of everything served
@@ -159,6 +161,9 @@ class FakeGrocy:
             return httpx.Response(500, text="<html>no such table: users</html>")
         if proxied:
             session_user = self._user_named(proxied)
+        elif self.proxy_header and not (key_user and path.startswith("/api/")):
+            error = f"ReverseProxyAuthMiddleware: {self.proxy_header} header is missing or invalid"
+            return httpx.Response(500, json={"error_message": error, "error_details": {}})
 
         if path.startswith("/api/"):
             user = key_user or session_user
@@ -170,7 +175,7 @@ class FakeGrocy:
     def _user_named(self, username: str) -> dict:
         user = next((u for u in self.users.values() if u["username"] == username), None)
         if user is None:
-            user = self.users[self.add_user(username, "")]
+            user = self.users[self.add_user(username, "", admin=True)]
         return user
 
     def _redirect(self, to: str, **headers) -> httpx.Response:
@@ -300,7 +305,7 @@ def client(tmp_path, monkeypatch, grocy):
     # the tests call check_active_keys themselves.
     monkeypatch.setenv("GA_KEY_CHECK_SECONDS", "0")
 
-    from app import config, db, security
+    from app import config, db, deps, security
     from app.grocy import client as grocy_client
     from app.services import accounts
 
@@ -309,6 +314,7 @@ def client(tmp_path, monkeypatch, grocy):
     security.reset_crypto_cache()
     grocy_client.reset_cache()
     accounts.reset_activity()
+    deps.reset_warnings()
 
     from app.main import create_app
 

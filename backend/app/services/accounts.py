@@ -5,6 +5,7 @@ session ends with it."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -32,6 +33,9 @@ ADMIN_RECHECK_RETRY = timedelta(minutes=1)
 ACTIVE_WITHIN_SECONDS = 90.0
 
 _last_seen: dict[int, float] = {}  # user id -> time.monotonic() of their last request
+# A page that opens with several requests at once would otherwise sign the same
+# person in several times side by side: a Grocy key each, and one user row too many.
+_proxy_sign_ins: dict[str, asyncio.Lock] = {}  # the proxy's name for someone -> their turn
 
 
 def grocy_for(user: User, http: httpx.AsyncClient) -> GrocyClient:
@@ -116,16 +120,18 @@ async def sign_in_from_proxy(
 
     Raises ApiKeyRequired (signed_in=False when Grocy doesn't accept the header) or
     GrocyError."""
-    async with new_login_http() as login_http:
-        web = WebSession(get_config().grocy_base, login_http, headers={header: username})
-        who = await web.current_user()
-        if who is None:
-            await web.load_start_page()
+    # One at a time per person: whoever waited finds the key the first one stored.
+    async with _proxy_sign_ins.setdefault(username, asyncio.Lock()):
+        async with new_login_http() as login_http:
+            web = WebSession(get_config().grocy_base, login_http, headers={header: username})
             who = await web.current_user()
-        if who is None:
-            raise ApiKeyRequired("Grocy didn't accept the proxy's user header", signed_in=False)
-        user, api_key = await _key_for(db, http, web, who)
-    return await _remember(db, http, who, api_key, user)
+            if who is None:
+                await web.load_start_page()
+                who = await web.current_user()
+            if who is None:
+                raise ApiKeyRequired("Grocy didn't accept the proxy's user header", signed_in=False)
+            user, api_key = await _key_for(db, http, web, who)
+        return await _remember(db, http, who, api_key, user)
 
 
 async def _key_for(
@@ -221,6 +227,7 @@ def note_seen(user_id: int) -> None:
 
 def reset_activity() -> None:
     _last_seen.clear()
+    _proxy_sign_ins.clear()
 
 
 async def check_active_keys(http: httpx.AsyncClient) -> None:
