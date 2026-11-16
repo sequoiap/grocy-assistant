@@ -14,7 +14,7 @@ desktop browser and as a home-screen app on a phone.
 
 | 1. Scan | 2. Snap the receipt | 3. Review and add |
 | :---: | :---: | :---: |
-| <img src="docs/screenshots/scan.png" width="240" alt="The scan screen on a phone: the camera is pointed at a barcode, the product is recognized as Sourdough Bread, and seven scanned items are listed below."> | <img src="docs/screenshots/receipt.png" width="240" alt="The receipts screen on a phone: a photographed Walmart receipt has been read, with eight lines matched to the scanned items, the subtotal, tax and store filled in."> | <img src="docs/screenshots/review.png" width="240" alt="The review screen on a phone: eight items with names, prices, quantities and due dates, the item prices matching the receipt subtotal, and an Add 8 items to Grocy button."> |
+| <img src="docs/screenshots/scan.png" width="215" alt="The scan screen on a phone: the camera is pointed at a barcode, the product is recognized as Sourdough Bread, and seven scanned items are listed below."> | <img src="docs/screenshots/receipt.png" width="215" alt="The receipts screen on a phone: a photographed Walmart receipt has been read, with eight lines matched to the scanned items, the subtotal, tax and store filled in."> | <img src="docs/screenshots/review.png" width="215" alt="The review screen on a phone: eight items with names, prices, quantities and due dates, the item prices matching the receipt subtotal, and an Add 8 items to Grocy button."> |
 | Point the camera at each barcode once. | The receipt fills in quantities, prices, the store and the date. | Check one screen, then send it all to Grocy. |
 
 Prefer to review on a bigger screen? Open the trip on your computer and use your
