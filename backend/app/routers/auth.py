@@ -1,16 +1,18 @@
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import __version__
+from ..config import get_config
 from ..db import get_db
-from ..deps import fresh_user, get_http, start_session, user_out
+from ..deps import fresh_user, get_http, proxy_user, start_session, user_out
 from ..errors import API_KEY_REQUIRED, GROCY_UNREACHABLE, ApiError
 from ..grocy.client import GrocyError, GrocyUnreachable
 from ..grocy.login import ApiKeyRequired, BadCredentials
 from ..models import AuthSession, User
-from ..schemas import LoginIn, StatusOut, UserOut
+from ..schemas import LoginIn, MeOut, StatusOut, UserOut
 from ..security import SESSION_COOKIE, hash_token
 from ..services.accounts import sign_in_with_api_key, sign_in_with_password
 
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 @router.get("/status", response_model=StatusOut)
 def status():
-    return StatusOut(version=__version__)
+    return StatusOut(version=__version__, single_sign_on=get_config().trusted_header is not None)
 
 
 @router.post("/auth/login", response_model=UserOut)
@@ -82,6 +84,21 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 
-@router.get("/auth/me", response_model=UserOut)
-def me(user: User = Depends(fresh_user)):
-    return user_out(user)
+@router.get("/auth/me", response_model=MeOut)
+def me(request: Request, user: User = Depends(fresh_user)):
+    return MeOut(**user_out(user).model_dump(), via_proxy=proxy_user(request) == user.username)
+
+
+@router.get("/auth/through-proxy", include_in_schema=False)
+def through_proxy(next: str = "/"):
+    """Where the PWA sends the whole browser when something in front of the app (a
+    single-sign-on proxy whose own session ran out) has to show its sign-in page.
+
+    The PWA's pages are served from the phone's cache without asking the network,
+    and its API calls can't follow a redirect to another site, so that proxy never
+    gets to show anything. A page load of this address is not cached: the proxy
+    sees it, signs the person in, and they come back here to be sent on to `next`."""
+    local = next.startswith("/") and not next.startswith(("//", "/\\"))
+    return RedirectResponse(
+        next if local else "/", status_code=303, headers={"Cache-Control": "no-store"}
+    )

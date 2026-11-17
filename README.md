@@ -75,6 +75,59 @@ If your Grocy doesn't use its own login form (LDAP or reverse-proxy
 authentication), choose *Use a Grocy API key instead* on the sign-in screen and
 paste a key from Grocy's wrench menu → *Manage API keys* → *Add*.
 
+#### Behind a single-sign-on proxy
+
+If Grocy uses reverse-proxy authentication (`GROCY_AUTH_CLASS` set to
+`Grocy\Middleware\Auth\ReverseProxyAuthMiddleware`, behind Authentik, Authelia,
+oauth2-proxy or similar), the app can use the same sign-in. Put it behind the same
+proxy and set both of these:
+
+```yaml
+    environment:
+      # The header Grocy trusts (its GROCY_REVERSE_PROXY_AUTH_HEADER),
+      # e.g. X-Authentik-Username or Remote-User.
+      GA_TRUSTED_USER_HEADER: X-Authentik-Username
+      # Where the proxy connects to the app from: IP addresses or networks,
+      # separated by commas.
+      GA_TRUSTED_PROXIES: 172.18.0.5
+```
+
+Whoever the proxy has signed in is then signed in to the app as well, with no
+sign-in screen: the app passes the header on to Grocy, so Grocy decides who that is,
+and gets them an API key as above. A person's existing key is reused, so signing in
+on another device doesn't create another one.
+
+The header works like a password that nobody has to know, so read this before
+turning it on:
+
+- **The header is believed only on connections from `GA_TRUSTED_PROXIES`.** From
+  any other address it is ignored and the usual sign-in screen is shown. The app
+  refuses to start with `GA_TRUSTED_USER_HEADER` set and `GA_TRUSTED_PROXIES`
+  missing. List the proxy's own address where you can (in Compose, give the proxy a
+  fixed `ipv4_address`). If you list a whole Docker network instead, every
+  container on it is trusted, and you must also remove the app's `ports:` entry:
+  connections to a published port can arrive from that network's own gateway
+  address, which would let anyone who reaches the port sign in as anyone.
+- **The proxy must replace the header**, never pass on one the browser sent. A
+  request carrying the header twice is refused.
+- **Give the app the same access rules as Grocy.** Everyone the proxy lets through
+  to the app gets a Grocy account: Grocy creates one for any name it hasn't seen,
+  and Grocy 4.7.1 makes that account an admin.
+- **People are managed at the proxy.** Deleting someone in Grocy signs them out
+  here, but if the proxy still lets them in, their next visit creates a new Grocy
+  account. Likewise, signing out of the app only lasts until the next visit; to
+  really sign out, sign out of the proxy.
+- **Not using the Docker image?** Start uvicorn with `--no-proxy-headers`, as the
+  image does. Otherwise the address the app checks can be one taken from
+  `X-Forwarded-For` instead of the one that actually connected.
+
+In the app, someone the proxy signed in has no *Sign out* button, and when the
+proxy's own session runs out the app sends the browser to the proxy's sign-in
+page and brings it back to where it was.
+
+If the sign-in screen appears although you came through the proxy, the app's log
+says which address it ignored the header from.
+
 ## Installing with Docker
 
 You need:
@@ -183,6 +236,8 @@ environment variable:
 | `GA_OCR_CONFIDENCE_THRESHOLD` | `0.6` | Below this, the AI fallback is consulted |
 | `GA_MAX_UPLOAD_MB` | `25` | Per-photo upload limit |
 | `GA_SESSION_DAYS` | `90` | How long a sign-in lasts |
+| `GA_TRUSTED_USER_HEADER` | unset | Header a single-sign-on proxy names the user in; see [Behind a single-sign-on proxy](#behind-a-single-sign-on-proxy) |
+| `GA_TRUSTED_PROXIES` | unset | Addresses or networks that header is believed from; required with it |
 | `GA_KEY_CHECK_SECONDS` | `15` | How often the Grocy key of each person using the app is re-checked (`0` turns it off) |
 
 ## Development

@@ -104,7 +104,12 @@
   {/if}
 
   <section class="sec end">
-    <button type="button" class="btn block" onclick={() => session.signOut()}><Icon name="logout" /> Sign out</button>
+    {#if user?.via_proxy}
+      <!-- Signing out here would be undone by the very next request. -->
+      <p class="small muted">Your single sign-on signs you in here. To sign out, sign out there.</p>
+    {:else}
+      <button type="button" class="btn block" onclick={() => session.signOut()}><Icon name="logout" /> Sign out</button>
+    {/if}
     <p class="small muted version">
       Grocy Assistant {session.status?.version ?? ''}{#if meta.value?.grocy_version}, {meta.value.grocy_reachable === false ? 'last connected to' : 'connected to'} Grocy {meta.value.grocy_version}{/if}
     </p>

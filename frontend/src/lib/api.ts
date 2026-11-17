@@ -26,8 +26,11 @@ import type {
  * - `api_key_required`: sign-in details were right, but the server couldn't get an API key by itself.
  * - `grocy_unreachable`: Grocy is down; nothing was changed.
  * - `grocy_account_invalid`: Grocy rejected this person's key, and the server has ended the session.
+ *
+ * And one this file adds by itself:
+ * - `proxy_sign_in`: the answer came from something in front of the server (see answeredByProxy).
  */
-export type ApiErrorCode = 'api_key_required' | 'grocy_unreachable' | 'grocy_account_invalid';
+export type ApiErrorCode = 'api_key_required' | 'grocy_unreachable' | 'grocy_account_invalid' | 'proxy_sign_in';
 
 export class ApiError extends Error {
   /** HTTP status, or 0 when the server couldn't be reached at all. */
@@ -41,7 +44,7 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
   get offline(): boolean {
-    return this.status === 0;
+    return this.status === 0 && this.code === null;
   }
 }
 
@@ -55,6 +58,8 @@ export const isGrocyUnreachable = (err: unknown) => hasCode(err, 'grocy_unreacha
 export const isAccountInvalid = (err: unknown) => hasCode(err, 'grocy_account_invalid');
 /** Username and password were right, but the person has to paste an API key to finish signing in. */
 export const isApiKeyRequired = (err: unknown) => hasCode(err, 'api_key_required');
+/** A single-sign-on proxy in front of the server wants the person to sign in there first. */
+export const isProxySignIn = (err: unknown) => hasCode(err, 'proxy_sign_in');
 
 type ValidationDetail = { loc?: (string | number)[]; msg?: string };
 
@@ -97,10 +102,43 @@ function handleUnauthorized(err: ApiError, quiet = false): void {
   if (err.status === 401 && (!quiet || isAccountInvalid(err))) unauthorizedHandler?.(err);
 }
 
+let signInAgain: (() => Promise<boolean>) | null = null;
+let signingInAgain: Promise<boolean> | null = null;
+
+/**
+ * Asked when Grocy rejected the person's key and the server signed them out, before
+ * anyone is told. If it resolves true they are signed in again (a single-sign-on
+ * proxy vouches for them) and the request that found out is simply made again.
+ */
+export function onAccountInvalid(recover: () => Promise<boolean>): void {
+  signInAgain = recover;
+}
+
+let proxySignInHandler: (() => void) | null = null;
+
+/** Called when a single-sign-on proxy in front of the server answered in its place. */
+export function onProxySignIn(handler: () => void): void {
+  proxySignInHandler = handler;
+}
+
+/**
+ * Whether an answer came from something in front of the server, not the server: a
+ * single-sign-on proxy whose own session has run out answers every request with
+ * its sign-in page until the person has been there. The server's API never
+ * redirects, never answers with a web page, and its 401s always carry a `detail`.
+ */
+function answeredByProxy(res: Response, data: unknown): boolean {
+  if (res.type === 'opaqueredirect') return true;
+  if (res.status === 401) return !(data && typeof data === 'object' && 'detail' in data);
+  return res.ok && (res.headers.get('content-type') ?? '').includes('text/html');
+}
+
 interface RequestOptions {
   body?: unknown;
   /** Don't trigger the global sign-out handler on a plain 401 (login, boot probe). */
   quiet401?: boolean;
+  /** Set on the second attempt, after signing in again (see onAccountInvalid). */
+  again?: boolean;
   signal?: AbortSignal;
 }
 
@@ -109,6 +147,9 @@ async function request<T>(method: string, path: string, opts: RequestOptions = {
     method,
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },
+    // A redirect can only be a proxy's, to its sign-in page on another site, which a
+    // fetch isn't allowed to follow anyway. Unfollowed, it can be told from being offline.
+    redirect: 'manual',
     signal: opts.signal,
   };
   if (opts.body instanceof FormData) {
@@ -136,8 +177,17 @@ async function request<T>(method: string, path: string, opts: RequestOptions = {
       data = null;
     }
   }
+  if (answeredByProxy(res, data)) {
+    proxySignInHandler?.();
+    throw new ApiError(0, 'Your sign-in has run out. Sign in again to carry on.', 'proxy_sign_in');
+  }
   if (!res.ok) {
     const err = errorFrom(res.status, data);
+    // Not for the sign-in calls themselves (quiet401): they are how it is done.
+    if (isAccountInvalid(err) && signInAgain && !opts.quiet401 && !opts.again) {
+      signingInAgain ??= signInAgain().finally(() => (signingInAgain = null));
+      if (await signingInAgain) return request<T>(method, path, { ...opts, again: true });
+    }
     handleUnauthorized(err, opts.quiet401);
     throw err;
   }

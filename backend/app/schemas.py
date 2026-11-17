@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field
 
 class StatusOut(BaseModel):
     version: str
+    # A single-sign-on proxy signs people in (GA_TRUSTED_USER_HEADER), so the
+    # sign-in screen has nothing to ask for.
+    single_sign_on: bool = False
 
 
 class LoginIn(BaseModel):
@@ -27,6 +30,12 @@ class UserOut(BaseModel):
     username: str  # Grocy username
     display_name: str  # Grocy display name, falling back to the username
     is_admin: bool  # holds Grocy's ADMIN permission
+
+
+class MeOut(UserOut):
+    # The single-sign-on proxy is what has them signed in right now. Signing out
+    # here would be undone by their next request; they sign out at the proxy.
+    via_proxy: bool = False
 
 
 # --- settings --------------------------------------------------------------

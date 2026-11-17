@@ -34,7 +34,12 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,wasm}'],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api(\/|$)/],
+        // Only the app's own pages (see match() in src/lib/router.svelte.ts) are
+        // answered from the cache. Anything else is left to the network: /api, and
+        // the addresses a single-sign-on proxy uses on this same site for its
+        // sign-in round trip (/outpost.goauthentik.io/..., /oauth2/...), which
+        // would otherwise get the app instead of the proxy and never complete.
+        navigateFallbackAllowlist: [/^\/(\?|$)/, /^\/(login|settings)(\/|\?|$)/, /^\/trips\//],
         // No runtime caching at all: /api/* always goes straight to the network.
         runtimeCaching: [],
         cleanupOutdatedCaches: true,

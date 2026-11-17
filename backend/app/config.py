@@ -6,6 +6,7 @@ can be changed from the web UI. The AI provider is the only thing edited at
 runtime (Settings page); it lives in the database.
 """
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +26,17 @@ class Config(BaseSettings):
     # Required. The Grocy everyone signs in to, e.g. https://grocy.example.com or
     # https://example.com/grocy. Must be reachable from where this app runs.
     grocy_url: str = ""
+    # For a Grocy behind a single-sign-on proxy (Grocy's ReverseProxyAuthMiddleware):
+    # the request header, e.g. X-Authentik-Username or Remote-User, in which that
+    # proxy names the signed-in person. When set, a request carrying it is signed in
+    # as that Grocy user with no sign-in screen, and the header is passed on to Grocy
+    # under the same name to get them an API key. Whoever can get this header to the
+    # app can sign in as anyone, so it is only believed from GA_TRUSTED_PROXIES.
+    trusted_user_header: str = ""
+    # Required with the above: where that proxy connects from, as IP addresses or
+    # networks separated by commas or spaces, e.g. "172.18.0.5" or "172.18.0.0/16".
+    # The header is ignored on a connection from anywhere else.
+    trusted_proxies: str = ""
     # Used to encrypt stored Grocy/AI API keys. Generated into data_dir if unset.
     secret_key: str | None = None
     # "auto" marks the session cookie Secure whenever the request arrived over HTTPS
@@ -49,6 +61,20 @@ class Config(BaseSettings):
         return url.removesuffix("/api").rstrip("/")
 
     @property
+    def trusted_header(self) -> str | None:
+        return self.trusted_user_header.strip() or None
+
+    def is_trusted_proxy(self, address: str | None) -> bool:
+        """Whether a connection from `address` is the single-sign-on proxy's."""
+        try:
+            ip = ipaddress.ip_address(address or "")
+        except ValueError:
+            return False
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        return any(ip in network for network in _networks(self.trusted_proxies))
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "grocy-assistant.db"
 
@@ -63,12 +89,32 @@ class Config(BaseSettings):
 
 
 @lru_cache
+def _networks(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    networks = []
+    for entry in raw.replace(",", " ").split():
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            raise ConfigError(
+                f"GA_TRUSTED_PROXIES: {entry!r} is not an IP address or a network "
+                "such as 172.18.0.0/16"
+            ) from None
+    return tuple(networks)
+
+
+@lru_cache
 def get_config() -> Config:
     cfg = Config()
     if not cfg.grocy_url.strip():
         raise ConfigError(
             "GA_GROCY_URL is not set. Set it to the address of your Grocy, "
             "for example GA_GROCY_URL=https://grocy.example.com"
+        )
+    if cfg.trusted_header and not _networks(cfg.trusted_proxies):
+        raise ConfigError(
+            "GA_TRUSTED_USER_HEADER is set but GA_TRUSTED_PROXIES is not. Set it to the "
+            "address your single-sign-on proxy connects from, for example "
+            "GA_TRUSTED_PROXIES=172.18.0.5; the header is believed from there only"
         )
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.upload_dir.mkdir(parents=True, exist_ok=True)

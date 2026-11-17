@@ -59,7 +59,7 @@ def second_device(client) -> TestClient:
 def test_status_is_public_and_everything_else_needs_a_sign_in(client):
     from app import __version__
 
-    assert client.get("/api/status").json() == {"version": __version__}
+    assert client.get("/api/status").json() == {"version": __version__, "single_sign_on": False}
     assert client.get("/api/trips").status_code == 401
     assert client.get("/api/auth/me").status_code == 401
     assert client.get("/api/settings").status_code == 401
@@ -89,7 +89,7 @@ def test_first_sign_in_creates_the_user_and_later_ones_reuse_its_key(client, gro
     minted = grocy.keys_of(1, MINTED)
     assert len(minted) == 1 and stored_key(1) == minted[0]
     assert grocy.sessions == {}  # the Grocy web session was ended again
-    assert client.get("/api/auth/me").json() == me
+    assert client.get("/api/auth/me").json() == {**me, "via_proxy": False}
     assert client.post("/api/trips", json={}).status_code == 201  # no setup step needed
 
     assert client.post("/api/auth/logout").status_code == 204

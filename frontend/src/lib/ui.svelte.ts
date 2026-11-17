@@ -1,5 +1,5 @@
 // App-wide UI state: transient notices and network status.
-import { errorMessage, isAccountInvalid, isGrocyUnreachable } from './api';
+import { errorMessage, isAccountInvalid, isGrocyUnreachable, isProxySignIn } from './api';
 
 export type ToastKind = 'info' | 'success' | 'error';
 
@@ -41,6 +41,8 @@ export const toasts = new Toasts();
 export function reportError(err: unknown): void {
   // The sign-in screen they are about to land on says why they were signed out.
   if (isAccountInvalid(err)) return;
+  // Likewise the screen that sends them to their single sign-on.
+  if (isProxySignIn(err)) return;
   // Grocy being down is not their mistake and nothing was lost: say so plainly, without the alarm.
   if (isGrocyUnreachable(err)) toasts.show(errorMessage(err), 'info', undefined, 7000);
   else toasts.error(errorMessage(err));

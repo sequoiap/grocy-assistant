@@ -22,6 +22,10 @@ NEVER_DUE = "2999-12-31"  # Grocy's convention for "never overdue"
 RETRY_AFTER_SECONDS = 10.0
 # What a reverse proxy answers when the Grocy behind it is down.
 GATEWAY_STATUSES = (502, 503, 504)
+# A Grocy that signs people in from a proxy's header (ReverseProxyAuthMiddleware)
+# has no 401 for an API key it doesn't know. It goes on to look for that header,
+# which a key request never carries, and answers 500 with an error starting like this.
+PROXY_AUTH_ERROR = "ReverseProxyAuthMiddleware:"
 
 
 class GrocyError(Exception):
@@ -253,6 +257,8 @@ class GrocyClient:
                 detail = resp.json().get("error_message") or resp.text
             except Exception:
                 detail = resp.text[:300]
+            if resp.status_code == 500 and PROXY_AUTH_ERROR in str(detail):
+                raise GrocyError("Grocy rejected the API key", 401)
             raise GrocyError(f"Grocy error ({resp.status_code}): {detail}", resp.status_code)
         if resp.status_code == 204 or not resp.content:
             return None

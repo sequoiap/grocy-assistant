@@ -4,6 +4,8 @@
 
 export interface StatusOut {
   version: string;
+  /** A single-sign-on proxy signs people in, so the sign-in screen has nothing to ask for. */
+  single_sign_on: boolean;
 }
 
 /** A Grocy username and password, or (the fallback) just a Grocy API key. */
@@ -21,6 +23,11 @@ export interface UserOut {
   display_name: string;
   /** Holds Grocy's ADMIN permission */
   is_admin: boolean;
+  /**
+   * The single-sign-on proxy is what has them signed in right now, so signing out
+   * here would be undone by the next request. Only `/auth/me` says.
+   */
+  via_proxy?: boolean;
 }
 
 // --- settings ----------------------------------------------------------------

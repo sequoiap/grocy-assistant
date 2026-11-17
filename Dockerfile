@@ -32,6 +32,8 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"
 
-# TLS is terminated in front of the app (Caddy, Tailscale Serve, ...), so trust the
-# proxy's X-Forwarded-* headers.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Uvicorn must not replace the address a request came from with what X-Forwarded-For
+# claims: the app decides by that address whether a single-sign-on header is believed
+# (GA_TRUSTED_PROXIES). TLS is terminated in front of the app (Caddy, Tailscale
+# Serve, ...); the app reads X-Forwarded-Proto itself where it matters.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers"]

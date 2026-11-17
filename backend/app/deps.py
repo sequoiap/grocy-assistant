@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 import httpx
@@ -8,21 +9,50 @@ from .ai import build_provider
 from .ai.base import AIError, AIProvider
 from .config import get_config
 from .db import get_db
-from .errors import account_invalid
-from .grocy.client import GrocyClient
+from .errors import ApiError, account_invalid
+from .grocy.client import GrocyClient, GrocyError, GrocyUnreachable
+from .grocy.login import ApiKeyRequired
 from .models import AuthSession, User, utcnow
 from .schemas import UserOut
 from .security import SESSION_COOKIE, new_session_token
-from .services.accounts import find_session, grocy_for, note_seen, refresh_admin
+from .services.accounts import (
+    find_session,
+    grocy_for,
+    note_seen,
+    refresh_admin,
+    sign_in_from_proxy,
+)
 from .services.settings import resolve_ai
+
+log = logging.getLogger(__name__)
 
 
 def get_http(request: Request) -> httpx.AsyncClient:
     return request.app.state.http
 
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+async def current_user(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    http: httpx.AsyncClient = Depends(get_http),
+) -> User:
     session = find_session(db, request.cookies.get(SESSION_COOKIE))
+    header = get_config().trusted_header
+    proxied = proxy_user(request)
+    if proxied and (
+        session is None or session.ended_reason is not None or session.user.username != proxied
+    ):
+        # The proxy says someone is here who this browser isn't signed in as (yet):
+        # nobody, someone else (the proxy's sign-in changed), or a signed-out account.
+        user = await _sign_in_from_proxy(db, http, request, header, proxied)
+        if user is not None:
+            if session is not None:
+                db.delete(session)
+                db.commit()
+            start_session(db, user, request, response)
+            note_seen(user.id)
+            return user
     if session is None:
         raise HTTPException(401, "Not signed in")
     if session.ended_reason is not None:
@@ -31,6 +61,72 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise account_invalid()
     note_seen(session.user_id)
     return session.user
+
+
+def proxy_user(request: Request) -> str:
+    """Who the single-sign-on proxy says is making this request; "" if there is no
+    such proxy, it doesn't say, or what says so isn't the proxy."""
+    header = get_config().trusted_header
+    values = request.headers.getlist(header) if header else []
+    if not values:
+        return ""
+    peer = request.client.host if request.client else None
+    if not get_config().is_trusted_proxy(peer):
+        # Anyone can type a header. Only the proxy's own connections are believed.
+        _warn_once(
+            f"peer {peer}",
+            "Ignoring %s on a request from %s, which is not in GA_TRUSTED_PROXIES",
+            header,
+            peer,
+        )
+        return ""
+    if len(values) != 1:
+        # A proxy that adds its header next to one the browser sent, instead of
+        # replacing it. Grocy refuses these as well.
+        _warn_once(
+            "repeated",
+            "Ignoring %s: it arrived %d times. The proxy has to replace this header, not add to it",
+            header,
+            len(values),
+        )
+        return ""
+    return values[0].strip()
+
+
+_warned: set[str] = set()
+
+
+def _warn_once(about: str, message: str, *args: object) -> None:
+    """These would otherwise be logged for every request of a misconfigured setup."""
+    if about not in _warned and len(_warned) < 50:
+        _warned.add(about)
+        log.warning(message, *args)
+
+
+def reset_warnings() -> None:
+    _warned.clear()
+
+
+async def _sign_in_from_proxy(
+    db: Session, http: httpx.AsyncClient, request: Request, header: str, username: str
+) -> User | None:
+    """The proxy's user, signed in; None if Grocy doesn't accept the header, which
+    leaves the request to the usual session cookie (or the sign-in screen)."""
+    try:
+        return await sign_in_from_proxy(
+            db, http, request.app.state.new_login_http, header, username
+        )
+    except ApiKeyRequired as exc:
+        # Most likely Grocy isn't set up to trust this header.
+        log.warning("Signing in %s from %s failed: %s", username, header, exc)
+        return None
+    except GrocyError as exc:
+        if isinstance(exc, GrocyUnreachable):
+            raise
+        # Answered here, not by the app-wide handler: a 401 there means a stored key
+        # died, which is not what happened.
+        log.warning("Signing in %s from %s failed: %s", username, header, exc.message)
+        raise ApiError(502, exc.message) from None
 
 
 async def fresh_user(
