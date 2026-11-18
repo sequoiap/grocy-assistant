@@ -93,11 +93,7 @@ class MasterData:
     reachable: bool = True
 
     def find_barcode(self, barcode: str) -> dict | None:
-        for candidate in barcode_variants(barcode):
-            row = self.barcodes.get(candidate)
-            if row:
-                return row
-        return None
+        return _find_in(self.barcodes, barcode)
 
     def qu_name(self, qu_id: int | None, amount: float = 1) -> str:
         qu = self.quantity_units.get(qu_id or -1)
@@ -115,8 +111,22 @@ class MasterData:
 
 def barcode_variants(barcode: str) -> list[str]:
     """Equivalent spellings of a barcode: a UPC-A is an EAN-13 with a leading zero,
-    and stores/scanners disagree about which one to emit."""
-    code = barcode.strip()
+    and stores/scanners disagree about which one to emit. Small packages often carry
+    a UPC-E, an 8-digit compressed UPC-A, so each form also matches the other."""
+    out = _padded(barcode.strip())
+    for code in list(out):
+        if len(code) == 8:
+            other = upc_e_to_a(code)
+        elif len(code) == 12:
+            other = upc_a_to_e(code)
+        else:
+            continue
+        if other:
+            out += [v for v in _padded(other) if v not in out]
+    return out
+
+
+def _padded(code: str) -> list[str]:
     out = [code]
     if code.isdigit():
         stripped = code.lstrip("0")
@@ -128,6 +138,66 @@ def barcode_variants(barcode: str) -> list[str]:
         if stripped and stripped not in out:
             out.append(stripped)
     return out
+
+
+def _upc_check_digit(first11: str) -> str:
+    odd = sum(int(d) for d in first11[0::2])
+    even = sum(int(d) for d in first11[1::2])
+    return str((10 - (odd * 3 + even) % 10) % 10)
+
+
+def upc_e_to_a(code: str) -> str | None:
+    """The UPC-A an 8-digit UPC-E stands for, or None if `code` isn't a valid UPC-E.
+    The check digit is required to match, so an EAN-8 is never mistaken for one."""
+    if len(code) != 8 or not code.isdigit() or code[0] not in "01":
+        return None
+    ns, d, check = code[0], code[1:7], code[7]
+    last = d[5]
+    if last in "012":
+        body = d[0:2] + last + "0000" + d[2:5]
+    elif last == "3":
+        body = d[0:3] + "00000" + d[3:5]
+    elif last == "4":
+        body = d[0:4] + "00000" + d[4]
+    else:
+        body = d[0:5] + "0000" + last
+    first11 = ns + body
+    if _upc_check_digit(first11) != check:
+        return None
+    return first11 + check
+
+
+def upc_a_to_e(code: str) -> str | None:
+    """The 8-digit UPC-E for a UPC-A, or None when that UPC-A has no short form."""
+    if len(code) != 12 or not code.isdigit() or code[0] not in "01":
+        return None
+    if _upc_check_digit(code[:11]) != code[11]:
+        return None
+    m, p = code[1:6], code[6:11]
+    if m[3:5] == "00" and m[2] in "012" and p[:2] == "00":
+        d = m[0:2] + p[2:5] + m[2]
+    elif m[3:5] == "00" and p[:3] == "000":
+        d = m[0:3] + p[3:5] + "3"
+    elif m[4] == "0" and p[:4] == "0000":
+        d = m[0:4] + p[4] + "4"
+    elif p[:4] == "0000" and p[4] in "56789":
+        d = m + p[4]
+    else:
+        return None
+    short = code[0] + d + code[11]
+    return short if upc_e_to_a(short) == code else None
+
+
+def _barcode_table(rows: list[dict]) -> dict[str, dict]:
+    return {str(b["barcode"]).strip(): b for b in rows if b.get("barcode")}
+
+
+def _find_in(table: dict[str, dict], barcode: str) -> dict | None:
+    for candidate in barcode_variants(barcode):
+        row = table.get(candidate)
+        if row:
+            return row
+    return None
 
 
 _cache: dict[str, MasterData] = {}  # API base -> last good snapshot
@@ -172,9 +242,7 @@ def _build_master_data(raw: dict[str, Any]) -> MasterData:
     settings = raw.get("user_settings") or {}
     return MasterData(
         products={int(p["id"]): p for p in raw["products"]},
-        barcodes={
-            str(b["barcode"]).strip(): b for b in raw["product_barcodes"] if b.get("barcode")
-        },
+        barcodes=_barcode_table(raw["product_barcodes"]),
         locations=_active(raw["locations"]),
         stores=_active(raw["shopping_locations"]),
         quantity_units={int(u["id"]): u for u in raw["quantity_units"]},
@@ -340,6 +408,26 @@ class GrocyClient:
         await self._request("POST", f"/stock/transactions/{transaction_id}/undo")
 
     # --- master data snapshot -------------------------------------------
+
+    async def find_barcode_live(self, barcode: str) -> dict | None:
+        """Ask Grocy itself whether a product has this barcode (in any spelling), for
+        when the snapshot doesn't know it. Reads only the barcode table, so a scan of
+        something new costs one request instead of a full master-data refresh.
+
+        None when no product has it, and also when Grocy can't be asked right now:
+        an unknown barcode during an outage is handled as new, as the snapshot would."""
+        if time.monotonic() < _retry_at.get(self.base_url, 0.0):
+            return None
+        try:
+            rows = await self.objects("product_barcodes")
+        except GrocyError as exc:
+            if isinstance(exc, GrocyUnreachable):
+                return None  # _request already started the back-off
+            if (exc.status or 0) >= 500:
+                _note_outage(self.base_url)
+                return None
+            raise
+        return _find_in(_barcode_table(rows), barcode)
 
     async def master_data(self, max_age: float = 30.0, force: bool = False) -> MasterData:
         """The current snapshot, refreshed when older than `max_age` (or `force`).

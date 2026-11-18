@@ -234,8 +234,9 @@ async def scan(
             item.product_id, item.barcode = product_id, None
     else:
         row = md.find_barcode(barcode)
-        if row is None:
-            # Someone may have just added it in Grocy; look once more before giving up.
+        if row is None and await grocy.find_barcode_live(barcode) is not None:
+            # Someone just added it in Grocy. Refresh everything, since the product
+            # it belongs to may be new as well.
             md = await grocy.master_data(force=True)
             row = md.find_barcode(barcode)
         if row is not None:
