@@ -86,7 +86,11 @@ def _set_aside_old_database(path: Path) -> None:
 # Columns added after the first release. create_all() only creates missing tables,
 # so databases from older versions get these added in place on startup.
 _ADDED_COLUMNS = {
-    "trips": {"revision": "INTEGER NOT NULL DEFAULT 0"},
+    "trips": {
+        "revision": "INTEGER NOT NULL DEFAULT 0",
+        "kind": "VARCHAR(16) NOT NULL DEFAULT 'shopping'",
+    },
+    "trip_items": {"lots": "JSON", "transaction_ids": "JSON"},
     "auth_sessions": {"ended_reason": "VARCHAR(32)"},
 }
 

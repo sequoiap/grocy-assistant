@@ -16,6 +16,7 @@ from ..schemas import (
     IdName,
     ItemOut,
     LookupOut,
+    Lot,
     NewProductDefaults,
     NewProductDraft,
     ProductHit,
@@ -51,15 +52,37 @@ class Resolved:
     line_total: float | None
     price_source: str | None
     unit_price: float | None
+    lots: list[dict]  # [{"amount", "due_date"}], amounts in `quantity` units
+    rest_amount: float  # the part of `quantity` not in a lot; due on `due_date`
     due_date: str  # ISO or "never"
     due_source: str
     location_id: int | None
     shopping_location_id: int | None
+    in_stock: float | None
     warnings: list[str]
 
     @property
     def best_before_date(self) -> str:
-        return NEVER_DUE if self.due_date == "never" else self.due_date
+        return grocy_due(self.due_date)
+
+    def bookings(self) -> list[tuple[float, str]]:
+        """(stock amount, Grocy best-before date) for each stock entry to add: one
+        per lot, then the rest. Amounts that round to nothing are left out."""
+        parts = [(float(lot["amount"]), str(lot["due_date"])) for lot in self.lots]
+        parts.append((self.rest_amount, self.due_date))
+        return [
+            (round(amount * self.pack_factor, 4), grocy_due(due))
+            for amount, due in parts
+            if round(amount * self.pack_factor, 4) > 0
+        ]
+
+
+def grocy_due(due: str) -> str:
+    return NEVER_DUE if due == "never" else due
+
+
+def lots_total(lots: list | None) -> float:
+    return round(sum(float(lot["amount"]) for lot in lots or []), 4)
 
 
 def _unit_is_weight(unit_name: str, weight_unit: str | None) -> bool:
@@ -141,6 +164,11 @@ def resolve_item(item: TripItem, trip: Trip, md: MasterData) -> Resolved:
         quantity, quantity_source = float(item.scan_count), "scans"
     else:
         quantity, quantity_source = 1.0, "default"
+    lots = [dict(lot) for lot in item.lots or []]
+    # Lots are carved out of the quantity; the API keeps them within it, but a
+    # receipt read afterwards can lower a derived quantity below them.
+    quantity = max(quantity, lots_total(lots))
+    rest_amount = round(quantity - lots_total(lots), 4)
     stock_amount = round(quantity * pack_factor, 4)
 
     # -- price --------------------------------------------------------------
@@ -168,6 +196,9 @@ def resolve_item(item: TripItem, trip: Trip, md: MasterData) -> Resolved:
         # Not on any receipt: if the whole trip was one store, it came from there.
         ready = [r for r in trip.receipts if r.status == "ready"]
         store_id = ready[0].shopping_location_id if len(ready) == 1 else None
+    in_stock = None
+    if product and md.stock is not None:
+        in_stock = md.stock.get(int(product["id"]), 0.0)
 
     # -- things worth a second look -------------------------------------------
     if state in ("ready", "needs_product"):
@@ -184,6 +215,11 @@ def resolve_item(item: TripItem, trip: Trip, md: MasterData) -> Resolved:
             warnings.append(
                 f"Sold by weight ({line.weight:g} {line.weight_unit or ''}); counted as 1".strip()
             )
+        if trip.kind == "inventory" and in_stock:
+            warnings.append(
+                f"Grocy already has {in_stock:g} {md.qu_name(stock_unit_id, in_stock)} of this. "
+                "What you counted is added to that, so leave out anything already in Grocy."
+            )
 
     return Resolved(
         name=name,
@@ -198,10 +234,13 @@ def resolve_item(item: TripItem, trip: Trip, md: MasterData) -> Resolved:
         line_total=line_total,
         price_source=price_source,
         unit_price=unit_price,
+        lots=lots,
+        rest_amount=rest_amount,
         due_date=due_date,
         due_source=due_source,
         location_id=location_id,
         shopping_location_id=store_id,
+        in_stock=in_stock,
         warnings=warnings,
     )
 
@@ -252,6 +291,8 @@ def item_out(item: TripItem, trip: Trip, md: MasterData) -> ItemOut:
         line_total=r.line_total,
         price_source=r.price_source,
         unit_price=r.unit_price,
+        lots=[Lot(**lot) for lot in r.lots],
+        rest_amount=r.rest_amount,
         due_date=r.due_date,
         due_source=r.due_source,
         location_id=r.location_id,
@@ -260,6 +301,7 @@ def item_out(item: TripItem, trip: Trip, md: MasterData) -> ItemOut:
         receipt_line_id=item.receipt_line_id,
         match_score=item.match_score,
         match_method=item.match_method,
+        in_stock=r.in_stock,
         warnings=r.warnings,
         error=item.error,
         committed_amount=item.committed_amount,
@@ -325,11 +367,13 @@ def trip_summary(trip: Trip) -> TripSummary:
     return TripSummary(
         id=trip.id,
         name=trip.name,
+        kind=trip.kind or "shopping",
         status=trip.status,
         created_at=trip.created_at,
         submitted_at=trip.submitted_at,
         created_by=trip.user.username,
         item_count=len(trip.items),
+        committed_count=sum(1 for i in trip.items if i.status == "committed"),
         receipt_count=len(trip.receipts),
         stores=stores,
         total=round(sum(totals), 2) if totals else None,

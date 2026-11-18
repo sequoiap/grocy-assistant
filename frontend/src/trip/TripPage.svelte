@@ -3,7 +3,7 @@
   import { api, errorMessage } from '../lib/api';
   import { back, navigate, type TripStep } from '../lib/router.svelte';
   import { meta } from '../lib/session.svelte';
-  import { tripTitle, dateTime } from '../lib/format';
+  import { tripNoun, tripTitle, dateTime } from '../lib/format';
   import { toasts } from '../lib/ui.svelte';
   import Icon from '../components/Icon.svelte';
   import TopBar from '../components/TopBar.svelte';
@@ -23,6 +23,7 @@
   let optionsOpen = $state(false);
   let newName = $state('');
   let confirmDelete = $state(false);
+  const noun = $derived(tripNoun(store.trip?.kind));
 
   onMount(() => {
     void store.load();
@@ -36,6 +37,11 @@
     if (step || !trip) return;
     const target = trip.status === 'submitted' || trip.items.length > 0 ? 'review' : 'scan';
     navigate(`/trips/${id}/${target}`, { replace: true });
+  });
+
+  // Inventory has no receipts step.
+  $effect(() => {
+    if (step === 'receipts' && store.trip?.kind === 'inventory') navigate(`/trips/${id}/review`, { replace: true });
   });
 
   // Matching can change while you were on another step; refresh on every switch.
@@ -61,7 +67,7 @@
     try {
       await api.deleteTrip(id);
       optionsOpen = false;
-      toasts.success('Trip deleted');
+      toasts.success(noun === 'inventory' ? 'Inventory deleted' : 'Trip deleted');
       navigate('/', { replace: true });
     } catch (err) {
       toasts.error(errorMessage(err));
@@ -69,7 +75,8 @@
   }
 </script>
 
-<div class="trip-page" style="--topbar-max: 1180px">
+<!-- Opaque top bar: the step strip below it is opaque too, and the two read as one header. -->
+<div class="trip-page" style="--topbar-max: 1180px; --topbar-bg: var(--paper)">
   <TopBar>
     {#snippet start()}
       <button type="button" class="btn ghost icon" aria-label="Back to trips" onclick={() => back('/')}>
@@ -95,7 +102,7 @@
         </button>
       {/if}
       {#if store.trip}
-        <button type="button" class="btn ghost icon" aria-label="Trip options" onclick={openOptions}>
+        <button type="button" class="btn ghost icon" aria-label={store.trip.kind === 'inventory' ? 'Inventory options' : 'Trip options'} onclick={openOptions}>
           <Icon name="more" />
         </button>
       {/if}
@@ -120,7 +127,7 @@
   {:else}
     <StepNav {store} {step} />
     {#if store.grocyDown}
-      <GrocyDownNotice readOnly={store.readOnly} />
+      <GrocyDownNotice readOnly={store.readOnly} {noun} />
     {/if}
     <main class="trip-main" class:review={step === 'review'}>
       {#if step === 'scan'}
@@ -136,7 +143,7 @@
 
 <LinkPhone bind:open={store.linkOpen} tripId={id} />
 
-<Sheet bind:open={optionsOpen} title="Trip options">
+<Sheet bind:open={optionsOpen} title={noun === 'inventory' ? 'Inventory options' : 'Trip options'}>
   <form class="rename" onsubmit={rename}>
     <label class="field">
       <span>Name</span>
@@ -160,19 +167,19 @@
   {/if}
   {#if !confirmDelete}
     <button type="button" class="btn danger block" onclick={() => (confirmDelete = true)}>
-      <Icon name="trash" /> Delete this trip
+      <Icon name="trash" /> Delete this {noun}
     </button>
   {:else}
     <div class="note warn">
       <Icon name="alert" size={18} />
       <p>
-        This deletes the trip and its receipt photos here.
+        This deletes the {noun}{noun === 'trip' ? ' and its receipt photos' : ''} here.
         {#if store.counts.committed > 0}Anything already added stays in Grocy; use Undo first if you want it removed there too.{/if}
       </p>
     </div>
     <div class="row">
       <button type="button" class="btn" onclick={() => (confirmDelete = false)}>Keep it</button>
-      <button type="button" class="btn danger" onclick={remove}><Icon name="trash" /> Delete trip</button>
+      <button type="button" class="btn danger" onclick={remove}><Icon name="trash" /> Delete {noun}</button>
     </div>
   {/if}
 </Sheet>
@@ -201,6 +208,8 @@
     text-overflow: ellipsis;
   }
   .trip-main {
+    /* Nothing on the page (sticky summaries, raised cards) can draw over the header. */
+    isolation: isolate;
     width: 100%;
     max-width: 1180px;
     margin: 0 auto;

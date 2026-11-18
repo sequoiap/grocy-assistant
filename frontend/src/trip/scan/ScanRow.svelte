@@ -1,13 +1,22 @@
 <script lang="ts">
   import Icon from '../../components/Icon.svelte';
   import type { ItemOut } from '../../lib/types';
+  import QtyStepper from '../review/QtyStepper.svelte';
 
   let {
     item,
     href,
     fresh = false,
     onremove,
-  }: { item: ItemOut; href: string; fresh?: boolean; onremove?: () => void } = $props();
+    onquantity,
+  }: {
+    item: ItemOut;
+    href: string;
+    fresh?: boolean;
+    onremove?: () => void;
+    /** Counting stock: show − n + to set how many there are. */
+    onquantity?: (v: number) => void;
+  } = $props();
 
   let imgFailed = $state(false);
   const needs = $derived(item.state === 'needs_product');
@@ -44,7 +53,9 @@
       {#if item.barcode}<span class="code">{item.barcode}</span>{/if}
     </span>
   </a>
-  {#if item.scan_count > 1}
+  {#if onquantity}
+    <QtyStepper value={item.quantity} label="How many {displayName}" onchange={onquantity} />
+  {:else if item.scan_count > 1}
     <span class="count" title="Scanned {item.scan_count} times">×{item.scan_count}</span>
   {/if}
   {#if onremove}

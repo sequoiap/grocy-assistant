@@ -54,6 +54,22 @@ phone as its scanner:
   same trip live: barcodes and receipt photos taken on the phone appear on the
   computer within a couple of seconds, where reviewing is more comfortable. Trips are
   shared by the household, so two people can also work on one trip at once.
+- **Taking inventory** is for what's already in the house, such as when you first
+  set up Grocy. Choose *Take inventory* instead of a shopping trip: there is no
+  receipt step, and price and store are optional. Scanning the same thing again
+  counts one more (or scan it once and use − and +), and other barcodes of a
+  product already counted, Grocycode labels included, add to the same row. Each
+  product can have several due dates ("2 due in March, the rest in June"), and
+  each date becomes its own stock entry in Grocy. Anything without a date gets the
+  product's usual shelf life, as Grocy would give it. Stock is booked as an
+  inventory correction, not a purchase. Counted amounts are added to what Grocy
+  already has, and the app warns when Grocy already holds some of a product.
+- **The camera can be switched off** on the scan screen while you walk to the
+  next cupboard. It stays off until you turn it back on.
+- **On a big screen** the review step can show everything as one editable table:
+  amounts, due dates, location, store and price. Tick several rows to set a due
+  date, location or store for all of them at once. Pair it with a phone as the
+  scanner and rows appear as you scan.
 - **Submitting** books each item through Grocy's REST API under the API key of the
   person who taps the button, so Grocy's journal shows who logged what. A submitted
   trip can be undone, which reverses its stock bookings in Grocy.

@@ -14,6 +14,7 @@ from ..grocy.client import GrocyClient, MasterData, barcode_variants
 from ..lookup.openfoodfacts import lookup_barcode
 from ..models import Receipt, ReceiptImage, ReceiptLine, StoreMapping, Trip, TripItem, User
 from ..schemas import (
+    BulkItemPatch,
     ItemCreate,
     ItemPatch,
     LineItemCreate,
@@ -33,7 +34,7 @@ from ..schemas import (
 from ..services import matching
 from ..services.receipts import image_path, save_upload, schedule_processing
 from ..services.submit import submit_trip, undo_trip
-from ..services.trips import item_out, trip_out, trip_summary
+from ..services.trips import item_out, lots_total, resolve_item, trip_out, trip_summary
 
 router = APIRouter(prefix="/api", tags=["trips"])
 
@@ -127,6 +128,46 @@ def _validate_due(value: str) -> str:
         raise HTTPException(422, 'Due date must be YYYY-MM-DD or "never"') from exc
 
 
+def _set_lots(item: TripItem, trip: Trip, md: MasterData, lots: list | None) -> None:
+    rows = [{"amount": lot.amount, "due_date": _validate_due(lot.due_date)} for lot in lots or []]
+    item.lots = None
+    counted = resolve_item(item, trip, md).quantity
+    item.lots = rows or None
+    if lots_total(rows) > counted:
+        item.quantity = lots_total(rows)  # more dated than counted: they are extra pieces
+
+
+def _check_quantity(item: TripItem, quantity: float) -> None:
+    if quantity < lots_total(item.lots) - 1e-9:
+        raise HTTPException(
+            422,
+            f"{lots_total(item.lots):g} of these have their own due dates. "
+            "Remove or lower those first.",
+        )
+
+
+def _same_stock(md: MasterData, item: TripItem, row: dict | None, product_id: int) -> bool:
+    """Whether a scan of a barcode (`row`, its Grocy barcode row) counts the same
+    thing as `item` does: the same product, in the same pack size."""
+    if item.product_id != product_id or item.status != "pending":
+        return False
+    mine = md.find_barcode(item.barcode) if item.barcode else None
+
+    def pack(r: dict | None) -> tuple:
+        if r is None or not r.get("amount"):
+            return (None, None)
+        return (float(r["amount"]), r.get("qu_id"))
+
+    return pack(mine) == pack(row)
+
+
+def _count_again(item: TripItem) -> None:
+    item.scan_count += 1
+    # Once the amount was set by hand, scans still count: add one to it.
+    if item.quantity is not None:
+        item.quantity += 1
+
+
 def _respond(db: Session, trip: Trip, md: MasterData, ai: AIProvider | None) -> TripOut:
     db.commit()
     db.refresh(trip)
@@ -151,7 +192,7 @@ async def create_trip(
     grocy: GrocyClient = Depends(get_grocy),
     ai: AIProvider | None = Depends(get_ai),
 ):
-    trip = Trip(user_id=user.id, name=body.name.strip())
+    trip = Trip(user_id=user.id, name=body.name.strip(), kind=body.kind)
     db.add(trip)
     return _respond(db, trip, await _md(grocy), ai)
 
@@ -219,7 +260,7 @@ async def scan(
             and item.status == "pending"
             and variants & set(barcode_variants(item.barcode))
         ):
-            item.scan_count += 1
+            _count_again(item)
             db.commit()
             return ScanOut(item=item_out(item, trip, md), duplicate=True)
 
@@ -243,6 +284,16 @@ async def scan(
             item.product_id = int(row["product_id"])
         else:
             item.lookup = await lookup_barcode(http, barcode)
+    if trip.kind == "inventory" and item.product_id is not None:
+        # Counting stock: another barcode of something already counted (a Grocycode
+        # label, a second barcode of the same product) adds to it instead of making a
+        # second row. Receipts never come into it, so nothing is lost by merging.
+        row = md.find_barcode(barcode) if item.barcode else None
+        for other in trip.items:
+            if _same_stock(md, other, row, item.product_id):
+                _count_again(other)
+                db.commit()
+                return ScanOut(item=item_out(other, trip, md), duplicate=True)
     trip.items.append(item)
     db.flush()
     matching.rematch(db, trip, md)
@@ -295,7 +346,17 @@ async def patch_item(
         else:
             item.new_product = _validate_draft(body.new_product, md)
             item.product_id, item.link_barcode = None, False
-    for field in ("quantity", "line_total", "location_id", "shopping_location_id"):
+    if "lots" in sent:
+        _set_lots(item, trip, md, body.lots)
+    if "quantity" in sent:
+        if body.quantity is not None:
+            _check_quantity(item, body.quantity)
+            item.quantity = body.quantity
+        else:
+            item.quantity = None  # back to the receipt / scans
+            if item.lots and resolve_item(item, trip, md).quantity < lots_total(item.lots):
+                item.quantity = lots_total(item.lots)  # never below the dated part
+    for field in ("line_total", "location_id", "shopping_location_id"):
         if field in sent:
             setattr(item, field, getattr(body, field))
     if "note" in sent:
@@ -330,6 +391,43 @@ async def patch_item(
 
     db.flush()
     matching.rematch(db, trip, md)
+    return _respond(db, trip, md, ai)
+
+
+@router.patch("/trips/{trip_id}/items", response_model=TripOut)
+async def patch_items(
+    trip_id: int,
+    body: BulkItemPatch,
+    db: Session = Depends(get_db),
+    grocy: GrocyClient = Depends(get_grocy),
+    ai: AIProvider | None = Depends(get_ai),
+):
+    """The same change to several items at once. Items already in Grocy are left alone."""
+    trip = _open_trip(db, trip_id)
+    md = await _md(grocy)
+    sent = body.model_fields_set
+    wanted = set(body.item_ids)
+    items = [i for i in trip.items if i.id in wanted and i.status != "committed"]
+    if not items:
+        raise HTTPException(404, "None of those items can be changed")
+    due = _validate_due(body.due_date) if "due_date" in sent and body.due_date else None
+    store_id = body.shopping_location_id
+    if "shopping_location_id" in sent and store_id is not None:
+        if not any(int(x["id"]) == store_id for x in md.stores):
+            raise HTTPException(422, "That store doesn't exist in Grocy")
+    if "location_id" in sent and body.location_id is not None:
+        if not any(int(x["id"]) == body.location_id for x in md.locations):
+            raise HTTPException(422, "That location doesn't exist in Grocy")
+    for item in items:
+        if "due_date" in sent:
+            item.due_date = due
+        if "location_id" in sent:
+            item.location_id = body.location_id
+        if "shopping_location_id" in sent:
+            item.shopping_location_id = store_id
+        if body.skipped is not None:
+            item.status = "skipped" if body.skipped else "pending"
+            item.error = None
     return _respond(db, trip, md, ai)
 
 

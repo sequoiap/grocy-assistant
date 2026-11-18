@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The three steps of a trip. Bottom bar on phones (thumb reach), top strip on wide screens.
+  // The steps of a trip (no receipts when taking inventory). Bottom bar on phones (thumb reach), top strip on wide screens.
   import { navigate, type TripStep } from '../lib/router.svelte';
   import Icon, { type IconName } from '../components/Icon.svelte';
   import type { TripStore } from './trip.svelte';
@@ -9,7 +9,7 @@
   const steps = $derived.by(() => {
     const trip = store.trip;
     const c = store.counts;
-    return [
+    const all = [
       { key: 'scan', n: 1, label: 'Scan', icon: 'barcode' as IconName, badge: c.scanned || null, attention: false, busy: false },
       {
         key: 'receipts',
@@ -30,11 +30,13 @@
         busy: false,
       },
     ];
+    const shown = trip?.kind === 'inventory' ? all.filter((s) => s.key !== 'receipts') : all;
+    return shown.map((s, i) => ({ ...s, n: i + 1 }));
   });
 </script>
 
 <nav class="trip-nav" aria-label="Trip steps">
-  <ol>
+  <ol style="--steps: {steps.length}">
     {#each steps as s (s.key)}
       <li>
         <a
@@ -72,7 +74,7 @@
   }
   ol {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(var(--steps, 3), 1fr);
     margin: 0 auto;
     padding: 0;
     list-style: none;
@@ -134,7 +136,11 @@
   @media (min-width: 960px) {
     .trip-nav {
       position: sticky;
-      top: calc(var(--safe-t) + 61px);
+      /* Tucked 2px under the top bar (which stays on top, z-index 20, and draws the
+         dividing line), so a display scale that rounds the two differently can't
+         leave a sliver of page showing between them. */
+      top: calc(var(--safe-t) + 59px);
+      z-index: 19;
       bottom: auto;
       border-top: 0;
       border-bottom: 1px solid var(--line);

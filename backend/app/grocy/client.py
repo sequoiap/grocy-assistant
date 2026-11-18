@@ -88,6 +88,9 @@ class MasterData:
     # (product_id, from_qu_id, to_qu_id) -> factor
     conversions: dict[tuple[int, int, int], float] = field(default_factory=dict)
     presets: dict[str, Any] = field(default_factory=dict)
+    # product_id -> amount in stock (stock unit), for products that have any.
+    # None when this Grocy (or an older saved snapshot) didn't say.
+    stock: dict[int, float] | None = None
     fetched_at: float = float("-inf")  # time.monotonic() of the fetch
     # False when this is an old snapshot served because Grocy couldn't be asked.
     reachable: bool = True
@@ -236,11 +239,24 @@ def _active(rows: list[dict]) -> list[dict]:
     return [r for r in rows if int(r.get("active", 1) or 0) == 1]
 
 
+def _stock_table(rows: list[dict] | None) -> dict[int, float] | None:
+    if rows is None:
+        return None
+    out: dict[int, float] = {}
+    for row in rows:
+        try:
+            out[int(row["product_id"])] = float(row.get("amount") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def _build_master_data(raw: dict[str, Any]) -> MasterData:
     """`raw` is what Grocy returned, keyed by entity. It is also what gets written
     to disk, so a restored snapshot goes through exactly this same code."""
     settings = raw.get("user_settings") or {}
     return MasterData(
+        stock=_stock_table(raw.get("stock")),
         products={int(p["id"]): p for p in raw["products"]},
         barcodes=_barcode_table(raw["product_barcodes"]),
         locations=_active(raw["locations"]),
@@ -388,11 +404,15 @@ class GrocyClient:
         location_id: int | None = None,
         shopping_location_id: int | None = None,
         note: str | None = None,
+        transaction_type: str = "purchase",
     ) -> list[dict]:
+        """Adds a stock entry. `transaction_type` is "purchase" for shopping, or
+        "inventory-correction" for stock that was already there (what Grocy's own
+        Inventory page books when the counted amount is higher)."""
         body: dict[str, Any] = {
             "amount": amount,
             "best_before_date": best_before_date,
-            "transaction_type": "purchase",
+            "transaction_type": transaction_type,
         }
         if price is not None:
             body["price"] = price
@@ -491,6 +511,13 @@ class GrocyClient:
             if not _missing_feature(exc):
                 raise
             raw["user_settings"] = {}
+        try:
+            # What's in stock, per product: shown when counting an inventory.
+            raw["stock"] = await self._request("GET", "/stock") or []
+        except GrocyError as exc:
+            if not _missing_feature(exc):
+                raise
+            raw["stock"] = None
         return raw
 
 

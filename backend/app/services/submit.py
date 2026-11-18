@@ -135,6 +135,54 @@ async def _ensure_product(db: Session, grocy: GrocyClient, item: TripItem) -> No
         db.commit()
 
 
+def _booked(item: TripItem) -> list[str]:
+    ids = list(item.transaction_ids or [])
+    if item.transaction_id and item.transaction_id not in ids:
+        ids.insert(0, item.transaction_id)  # booked by a version before transaction_ids
+    return ids
+
+
+async def _take_back(db: Session, grocy: GrocyClient, item: TripItem) -> None:
+    """Undo whatever this item has booked, newest first, recording each as it goes.
+    Raises on the first one Grocy refuses, leaving the rest recorded for next time."""
+    ids = _booked(item)
+    while ids:
+        await grocy.undo_transaction(ids[-1])
+        ids.pop()
+        item.transaction_ids = list(ids)
+        item.transaction_id = ids[0] if ids else None
+        db.commit()
+
+
+async def _book(db: Session, grocy: GrocyClient, item: TripItem, trip: Trip, resolved) -> None:
+    """Book every stock entry of one item (one per due date), or none of them: if a
+    later one fails, the earlier ones are taken back out before the error goes on."""
+    kind = "inventory-correction" if trip.kind == "inventory" else "purchase"
+    try:
+        for amount, best_before in resolved.bookings():
+            rows = await grocy.add_stock(
+                resolved.product_id,
+                amount=amount,
+                best_before_date=best_before,
+                price=resolved.unit_price,
+                location_id=resolved.location_id,
+                shopping_location_id=resolved.shopping_location_id,
+                note=item.note,
+                transaction_type=kind,
+            )
+            tid = rows[0].get("transaction_id") if rows else None
+            if tid:
+                item.transaction_ids = [*(item.transaction_ids or []), tid]
+                item.transaction_id = item.transaction_ids[0]
+                db.commit()
+    except GrocyError:
+        try:
+            await _take_back(db, grocy, item)
+        except GrocyError as undo_exc:
+            log.warning("couldn't take back part of item %s: %s", item.id, undo_exc)
+        raise
+
+
 async def submit_trip(db: Session, grocy: GrocyClient, trip: Trip) -> tuple[int, int, int]:
     """Returns (committed, failed, remaining).
 
@@ -149,6 +197,8 @@ async def submit_trip(db: Session, grocy: GrocyClient, trip: Trip) -> tuple[int,
         if resolve_item(item, trip, md).state == "needs_product":
             continue
         try:
+            # Left over from an earlier attempt that couldn't be rolled back then.
+            await _take_back(db, grocy, item)
             await _ensure_product(db, grocy, item)
             md = await grocy.master_data()
             resolved = resolve_item(item, trip, md)
@@ -157,16 +207,7 @@ async def submit_trip(db: Session, grocy: GrocyClient, trip: Trip) -> tuple[int,
                     # An old snapshot can't know a product created a moment ago.
                     raise GrocyUnreachable("Grocy stopped answering while booking this item")
                 raise GrocyError("Nothing to add: the product or amount is missing")
-            bookings = await grocy.add_stock(
-                resolved.product_id,
-                amount=resolved.stock_amount,
-                best_before_date=resolved.best_before_date,
-                price=resolved.unit_price,
-                location_id=resolved.location_id,
-                shopping_location_id=resolved.shopping_location_id,
-                note=item.note,
-            )
-            item.transaction_id = bookings[0].get("transaction_id") if bookings else None
+            await _book(db, grocy, item, trip, resolved)
             item.committed_amount = resolved.stock_amount
             item.status, item.error = "committed", None
             learn_from_item(db, item)
@@ -193,17 +234,17 @@ async def undo_trip(db: Session, grocy: GrocyClient, trip: Trip) -> int:
     for item in trip.items:
         if item.status != "committed":
             continue
-        if item.transaction_id:
-            try:
-                await grocy.undo_transaction(item.transaction_id)
-            except GrocyError as exc:
-                if _about_grocy_not_the_item(exc):
-                    raise
-                item.error = f"Undo failed: {exc.message}"
-                db.commit()
-                continue
+        try:
+            await _take_back(db, grocy, item)
+        except GrocyError as exc:
+            if _about_grocy_not_the_item(exc):
+                raise
+            item.error = f"Undo failed: {exc.message}"
+            db.commit()
+            continue
         item.status, item.error = "pending", None
         item.transaction_id = item.committed_amount = None
+        item.transaction_ids = None
         undone += 1
         db.commit()
     if any(i.status != "committed" for i in trip.items):

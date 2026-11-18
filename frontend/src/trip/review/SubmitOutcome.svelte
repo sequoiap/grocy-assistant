@@ -1,6 +1,6 @@
 <script lang="ts">
   // What happened when the trip was added to Grocy.
-  import { plural } from '../../lib/format';
+  import { plural, tripNoun } from '../../lib/format';
   import type { SubmitResult } from '../../lib/types';
   import Icon from '../../components/Icon.svelte';
   import type { TripStore } from '../trip.svelte';
@@ -21,6 +21,8 @@
 
   const failedItems = $derived((store.trip?.items ?? []).filter((i) => i.state === 'failed'));
   const allDone = $derived(result.trip.status === 'submitted');
+  const noun = $derived(tripNoun(result.trip.kind));
+  const thing = $derived(result.trip.kind === 'inventory' ? 'product' : 'item');
 </script>
 
 <section id="outcome" class="outcome" class:bad={result.failed > 0} aria-live="polite">
@@ -29,19 +31,23 @@
     <div>
       <h2>
         {#if result.committed && !result.failed}
-          Added {plural(result.committed, 'item')} to Grocy
+          Added {plural(result.committed, thing)} to Grocy
         {:else if result.committed}
           Added {result.committed}, {result.failed} didn't go through
         {:else if result.failed}
-          {plural(result.failed, 'item')} couldn't be added
+          {plural(result.failed, thing)} couldn't be added
         {:else}
           Nothing new was added
         {/if}
       </h2>
       {#if allDone}
-        <p class="small">The trip is done. Undo puts everything back the way it was.</p>
+        <p class="small">Everything in this {noun} is in Grocy now. Undo takes it all back out.</p>
       {:else if result.remaining > 0}
-        <p class="small">{plural(result.remaining, 'item')} still {result.remaining === 1 ? 'needs' : 'need'} a decision and {result.remaining === 1 ? 'is' : 'are'} waiting below.</p>
+        <p class="small">
+          {#if result.committed}Those {result.committed} are in Grocy's stock now.{/if}
+          <strong>{plural(result.remaining, thing)} {result.remaining === 1 ? "isn't" : "aren't"} in Grocy yet</strong>: {result.remaining === 1 ? 'it needs' : 'they need'} a product first.
+          {result.remaining === 1 ? "It's" : "They're"} below; choose one for each, then press Add again.
+        </p>
       {/if}
     </div>
     <button type="button" class="btn ghost icon" aria-label="Dismiss" onclick={onclose}><Icon name="x" /></button>
@@ -63,7 +69,7 @@
       <button type="button" class="btn" onclick={onundo}><Icon name="undo" size={20} /> Undo</button>
     {/if}
     {#if allDone}
-      <a class="btn" href="/">Back to trips</a>
+      <a class="btn" href="/">Done</a>
     {/if}
   </div>
 </section>
