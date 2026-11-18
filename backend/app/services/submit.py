@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from ..grocy.client import GrocyClient, GrocyError, GrocyUnreachable
 from ..models import LearnedMapping, StoreMapping, Trip, TripItem, utcnow
 from .textmatch import normalize_key
-from .trips import resolve_item
+from .trips import draft_pack, resolve_item
 
 log = logging.getLogger(__name__)
 
@@ -95,12 +95,42 @@ async def _ensure_product(db: Session, grocy: GrocyClient, item: TripItem) -> No
         item.link_barcode = bool(item.barcode)
         db.commit()
 
+    # Sold in packs: add the pack conversion and make the pack the purchase unit. Each
+    # step checks Grocy first, so a submit that stopped part-way finishes here next time.
+    pack = draft_pack(item.new_product) if item.product_id is not None else None
+    if pack:
+        pack_qu, size = pack
+        md = await grocy.master_data(force=True)
+        product = md.products.get(item.product_id)
+        if product is not None:
+            stock_qu = int(product["qu_id_stock"])
+            if (item.product_id, pack_qu, stock_qu) not in md.conversions:
+                await grocy.create_object(
+                    "quantity_unit_conversions",
+                    {
+                        "product_id": item.product_id,
+                        "from_qu_id": pack_qu,
+                        "to_qu_id": stock_qu,
+                        "factor": size,
+                    },
+                )
+            if int(product.get("qu_id_purchase") or 0) != pack_qu:
+                body = {"qu_id_purchase": pack_qu, "qu_id_price": pack_qu}
+                try:
+                    await grocy.update_object("products", item.product_id, body)
+                except GrocyError as exc:
+                    if exc.status != 400:
+                        raise
+                    body.pop("qu_id_price")  # older Grocy: no price unit column
+                    await grocy.update_object("products", item.product_id, body)
+
     if item.link_barcode and item.barcode and item.product_id is not None:
         md = await grocy.master_data(force=True)
         if md.find_barcode(item.barcode) is None:
-            await grocy.create_object(
-                "product_barcodes", {"product_id": item.product_id, "barcode": item.barcode}
-            )
+            barcode = {"product_id": item.product_id, "barcode": item.barcode}
+            if pack:
+                barcode |= {"qu_id": pack[0], "amount": 1}  # the barcode is on the pack
+            await grocy.create_object("product_barcodes", barcode)
         item.link_barcode = False
         db.commit()
 

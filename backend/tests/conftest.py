@@ -43,6 +43,7 @@ class FakeGrocy:
         self.undone: list[str] = []
         self.off_products: dict[str, dict] = {}
         self.fail_add_for: set[int] = set()
+        self.fail_create: set[str] = set()  # object tables whose POST answers 400
 
         self.users: dict[int, dict] = {}
         self.api_keys: list[dict] = []
@@ -239,9 +240,33 @@ class FakeGrocy:
             table = self.tables.setdefault(m[1], [])
             if request.method == "GET":
                 return httpx.Response(200, json=table)
+            if m[1] in self.fail_create:
+                return httpx.Response(400, json={"error_message": f"{m[1]} is broken"})
             row = {"id": len(table) + 1, "active": 1, **json.loads(request.content)}
             table.append(row)
+            if m[1] == "quantity_unit_conversions":
+                resolved = self.tables["quantity_unit_conversions_resolved"]
+                for a, b, f in (
+                    (row["from_qu_id"], row["to_qu_id"], row["factor"]),
+                    (row["to_qu_id"], row["from_qu_id"], 1 / row["factor"]),
+                ):
+                    resolved.append(
+                        {
+                            "product_id": row["product_id"],
+                            "from_qu_id": a,
+                            "to_qu_id": b,
+                            "factor": f,
+                        }
+                    )
             return httpx.Response(200, json={"created_object_id": str(row["id"])})
+        if m := re.fullmatch(r"/objects/(\w+)/(\d+)", path):
+            row = next((r for r in self.tables.get(m[1], []) if r["id"] == int(m[2])), None)
+            if row is None:
+                return httpx.Response(404, json={"error_message": "no such object"})
+            if request.method == "PUT":
+                row.update(json.loads(request.content))
+                return httpx.Response(204)
+            return httpx.Response(200, json=row)
         if m := re.fullmatch(r"/stock/products/(\d+)/add", path):
             pid = int(m[1])
             if pid in self.fail_add_for:

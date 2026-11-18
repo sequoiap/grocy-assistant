@@ -84,14 +84,22 @@ class IdName(BaseModel):
     name: str
 
 
+class QuantityUnit(IdName):
+    name_plural: str
+
+
 class NewProductDraft(BaseModel):
     """Everything needed to create a product in Grocy at submit time."""
 
     name: str = Field(min_length=1, max_length=200)
     location_id: int
-    qu_id: int  # used as stock, purchase, consume and price unit
+    qu_id: int  # stock and consume unit (also purchase and price unit, unless sold in packs)
     product_group_id: int | None = None
     default_best_before_days: int = 0  # 0 / -1 = never overdue
+    # Sold in packs: one `pack_qu_id` holds `pack_size` of `qu_id` (e.g. 1 Pack = 24 Pieces).
+    # Becomes the purchase and price unit, a conversion, and the barcode's unit.
+    pack_size: float | None = Field(default=None, gt=0, le=100000)
+    pack_qu_id: int | None = None
 
 
 class NewProductDefaults(BaseModel):
@@ -105,7 +113,7 @@ class GrocyMeta(BaseModel):
     grocy_version: str | None
     locations: list[IdName]
     stores: list[IdName]
-    quantity_units: list[IdName]
+    quantity_units: list[QuantityUnit]
     product_groups: list[IdName]
     new_product_defaults: NewProductDefaults
     # False when this was built from an old snapshot because Grocy couldn't be reached.

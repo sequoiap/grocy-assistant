@@ -304,6 +304,10 @@ class GrocyClient:
         invalidate_cache(self.base_url)
         return int(result["created_object_id"])
 
+    async def update_object(self, entity: str, object_id: int, data: dict) -> None:
+        await self._request("PUT", f"/objects/{entity}/{object_id}", json=data)
+        invalidate_cache(self.base_url)
+
     # --- stock ----------------------------------------------------------
 
     async def add_stock(

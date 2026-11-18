@@ -94,6 +94,13 @@ def _validate_draft(draft: NewProductDraft, md: MasterData) -> dict:
         raise HTTPException(422, "Pick a location that exists in Grocy")
     if draft.qu_id not in md.quantity_units:
         raise HTTPException(422, "Pick a quantity unit that exists in Grocy")
+    if (draft.pack_size is None) != (draft.pack_qu_id is None):
+        raise HTTPException(422, "A pack needs both a size and a unit")
+    if draft.pack_qu_id is not None:
+        if draft.pack_qu_id not in md.quantity_units:
+            raise HTTPException(422, "Pick a pack unit that exists in Grocy")
+        if draft.pack_qu_id == draft.qu_id:
+            raise HTTPException(422, "The pack unit must differ from the unit it's counted in")
     wanted = draft.name.strip().lower()
     if any(p["name"].strip().lower() == wanted for p in md.products.values()):
         raise HTTPException(409, f'Grocy already has a product named "{draft.name.strip()}"')

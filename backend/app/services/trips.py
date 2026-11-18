@@ -66,6 +66,13 @@ def _unit_is_weight(unit_name: str, weight_unit: str | None) -> bool:
     return bool(weight_unit) and unit_name.strip().lower() in _WEIGHT_UNITS.get(weight_unit, set())
 
 
+def draft_pack(draft: dict | None) -> tuple[int, float] | None:
+    """(pack unit id, stock units per pack) for a new product sold in packs, else None."""
+    if not draft or not draft.get("pack_qu_id") or not draft.get("pack_size"):
+        return None
+    return int(draft["pack_qu_id"]), float(draft["pack_size"])
+
+
 def default_due(days: int | None) -> str:
     return (date.today() + timedelta(days=days)).isoformat() if days and days > 0 else "never"
 
@@ -98,7 +105,11 @@ def resolve_item(item: TripItem, trip: Trip, md: MasterData) -> Resolved:
     elif draft:
         name = draft["name"]
         stock_unit_id = draft.get("qu_id")
-        pack_unit = md.qu_name(stock_unit_id)
+        pack = draft_pack(draft)
+        if pack:
+            pack_unit, pack_factor = md.qu_name(pack[0]), pack[1]
+        else:
+            pack_unit = md.qu_name(stock_unit_id)
         due_days = int(draft.get("default_best_before_days") or 0)
         default_location = draft.get("location_id")
     else:
