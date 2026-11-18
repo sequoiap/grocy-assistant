@@ -35,6 +35,24 @@
   let groupId = $state<number | null>(initial.product_group_id ?? null);
   // svelte-ignore state_referenced_locally
   let days = $state<number | null>(initial.default_best_before_days && initial.default_best_before_days > 0 ? initial.default_best_before_days : null);
+  // svelte-ignore state_referenced_locally
+  let packSize = $state<number | null>(initial.pack_size ?? null);
+  // svelte-ignore state_referenced_locally
+  let packQuId = $state<number | null>(initial.pack_qu_id ?? null);
+
+  const units = $derived(meta.value?.quantity_units ?? []);
+  const packUnits = $derived(units.filter((u) => u.id !== quId));
+  const packed = $derived(packSize != null && Number(packSize) > 0);
+  const unitName = (id: number | null, n = 1) => {
+    const u = units.find((u) => u.id === id);
+    return (n === 1 ? u?.name : u?.name_plural) ?? '';
+  };
+
+  // Preselect a pack unit that sounds like one (and move off the counting unit).
+  $effect(() => {
+    if (packQuId != null && packQuId !== quId) return;
+    packQuId = (packUnits.find((u) => /^(pack|package|box|case|carton|bag)/i.test(u.name)) ?? packUnits[0])?.id ?? null;
+  });
 
   // Fill defaults once Grocy's presets are known.
   $effect(() => {
@@ -48,7 +66,7 @@
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
-    if (!name.trim() || locationId == null || quId == null) return;
+    if (!name.trim() || locationId == null || quId == null || (packed && packQuId == null)) return;
     const n = Math.round(Number(days ?? 0));
     onsubmit({
       name: name.trim(),
@@ -56,6 +74,8 @@
       qu_id: quId,
       product_group_id: groupId,
       default_best_before_days: Number.isFinite(n) && n > 0 ? n : 0,
+      pack_size: packed ? Number(packSize) : null,
+      pack_qu_id: packed ? packQuId : null,
     });
   }
 </script>
@@ -87,7 +107,7 @@
         <span>Usually keeps for</span>
         <span class="days">
           <input id="{uid}-days" bind:value={days} type="number" inputmode="numeric" min="0" max="3650" placeholder="Doesn't expire" />
-          <span class="unit">days</span>
+          {#if days != null && String(days) !== ''}<span class="unit">days</span>{/if}
         </span>
       </label>
       {#if meta.value.product_groups.length}
@@ -100,6 +120,23 @@
         </label>
       {/if}
     </div>
+    {#if packUnits.length}
+      <div class="field">
+        <label class="label" for="{uid}-pack">Sold in packs <span class="opt">(optional)</span></label>
+        <div class="pack">
+          <input id="{uid}-pack" bind:value={packSize} type="number" inputmode="decimal" min="0" step="any" max="100000" placeholder="How many" />
+          <span class="per">{unitName(quId, 2)} per</span>
+          <select bind:value={packQuId} aria-label="Pack unit">
+            {#each packUnits as u (u.id)}<option value={u.id}>{u.name}</option>{/each}
+          </select>
+        </div>
+        {#if packed && packQuId != null}
+          <p class="small muted">Each {unitName(packQuId)} adds {Number(packSize)} {unitName(quId, Number(packSize))} to stock.</p>
+        {:else}
+          <p class="small muted">Leave empty if each one you buy is a single {unitName(quId)}.</p>
+        {/if}
+      </div>
+    {/if}
   {/if}
   {#if error && calm}
     <p class="note" role="status">{error}</p>
@@ -108,7 +145,7 @@
   {/if}
   <div class="actions">
     {#if oncancel}<button type="button" class="btn" onclick={oncancel}>Cancel</button>{/if}
-    <button class="btn primary grow" disabled={busy || !name.trim() || locationId == null || quId == null}>
+    <button class="btn primary grow" disabled={busy || !name.trim() || locationId == null || quId == null || (packed && packQuId == null)}>
       {#if busy}<span class="spinner"></span>{/if}
       {submitLabel}
     </button>
@@ -143,6 +180,16 @@
   }
   .opt {
     font-weight: 400;
+  }
+  .pack {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+  .per {
+    color: var(--ink-3);
+    white-space: nowrap;
   }
   .actions {
     display: flex;

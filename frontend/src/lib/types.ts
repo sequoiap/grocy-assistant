@@ -76,6 +76,10 @@ export interface IdName {
   name: string;
 }
 
+export interface QuantityUnit extends IdName {
+  name_plural: string;
+}
+
 export interface NewProductDraft {
   name: string;
   location_id: number;
@@ -83,6 +87,9 @@ export interface NewProductDraft {
   product_group_id?: number | null;
   /** 0 / -1 = never overdue */
   default_best_before_days?: number;
+  /** Sold in packs: one `pack_qu_id` holds `pack_size` of `qu_id` (1 Pack = 24 Pieces). */
+  pack_size?: number | null;
+  pack_qu_id?: number | null;
 }
 
 export interface NewProductDefaults {
@@ -96,7 +103,7 @@ export interface GrocyMeta {
   grocy_version: string | null;
   locations: IdName[];
   stores: IdName[];
-  quantity_units: IdName[];
+  quantity_units: QuantityUnit[];
   product_groups: IdName[];
   new_product_defaults: NewProductDefaults;
   /** False when this is the server's saved copy because Grocy couldn't be reached. */

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from ..config import get_config
 from ..deps import get_grocy
 from ..grocy.client import GrocyClient, GrocyError
-from ..schemas import GrocyMeta, IdName, ProductHit, StoreCreate
+from ..schemas import GrocyMeta, IdName, ProductHit, QuantityUnit, StoreCreate
 from ..services.trips import new_product_defaults, suggest_products
 
 router = APIRouter(prefix="/api/grocy", tags=["grocy"])
@@ -13,6 +13,11 @@ def _id_names(rows) -> list[IdName]:
     return sorted(
         (IdName(id=int(r["id"]), name=r["name"]) for r in rows), key=lambda x: x.name.lower()
     )
+
+
+def _plural(md, qu_id: int) -> str:
+    unit = md.quantity_units[qu_id]
+    return unit.get("name_plural") or unit["name"]
 
 
 @router.get("/meta", response_model=GrocyMeta)
@@ -31,7 +36,10 @@ async def meta(grocy: GrocyClient = Depends(get_grocy)):
         grocy_version=version,
         locations=_id_names(md.locations),
         stores=_id_names(md.stores),
-        quantity_units=_id_names(units),
+        quantity_units=[
+            QuantityUnit(id=u.id, name=u.name, name_plural=_plural(md, u.id))
+            for u in _id_names(units)
+        ],
         product_groups=_id_names(md.product_groups),
         new_product_defaults=new_product_defaults(md),
         grocy_reachable=md.reachable,

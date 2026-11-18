@@ -200,6 +200,72 @@ def test_pack_barcode_multiplies_stock_amount(authed, grocy):
     assert (grocy.bookings[0]["amount"], grocy.bookings[0]["price"]) == (24, 0.5)
 
 
+def _scan_new(authed, grocy, barcode="0096619635917"):
+    trip_id = authed.post("/api/trips", json={}).json()["id"]
+    item = authed.post(f"/api/trips/{trip_id}/scan", json={"barcode": barcode}).json()["item"]
+    return trip_id, item
+
+
+EGG_PACK = {"name": "Eggs", "location_id": 1, "qu_id": 1, "pack_size": 24, "pack_qu_id": 2}
+
+
+def test_new_product_sold_in_packs(authed, grocy):
+    trip_id, item = _scan_new(authed, grocy)
+    trip = authed.patch(
+        f"/api/trips/{trip_id}/items/{item['id']}",
+        json={"new_product": EGG_PACK, "line_total": 7.38},
+    ).json()
+    out = trip["items"][0]
+    assert (out["quantity"], out["pack_factor"], out["stock_amount"]) == (1, 24, 24)
+    assert (out["pack_unit"], out["stock_unit"], out["unit_price"]) == ("Pack", "Pieces", 0.3075)
+
+    result = authed.post(f"/api/trips/{trip_id}/submit").json()
+    assert result["committed"] == 1
+    product = grocy.tables["products"][-1]
+    assert (product["qu_id_stock"], product["qu_id_consume"]) == (1, 1)
+    assert (product["qu_id_purchase"], product["qu_id_price"]) == (2, 2)
+    [conv] = grocy.tables["quantity_unit_conversions"]
+    assert (conv["product_id"], conv["from_qu_id"], conv["to_qu_id"], conv["factor"]) == (
+        product["id"],
+        2,
+        1,
+        24,
+    )
+    [barcode] = grocy.tables["product_barcodes"]
+    assert (barcode["product_id"], barcode["qu_id"], barcode["amount"]) == (product["id"], 2, 1)
+    assert (grocy.bookings[0]["amount"], grocy.bookings[0]["price"]) == (24, 0.3075)
+
+
+def test_pack_setup_finishes_on_the_next_submit(authed, grocy):
+    trip_id, item = _scan_new(authed, grocy)
+    authed.patch(f"/api/trips/{trip_id}/items/{item['id']}", json={"new_product": EGG_PACK})
+    grocy.fail_create.add("quantity_unit_conversions")
+    result = authed.post(f"/api/trips/{trip_id}/submit").json()
+    assert result["failed"] == 1 and not grocy.bookings
+    assert len(grocy.tables["products"]) == 1
+
+    grocy.fail_create.clear()
+    result = authed.post(f"/api/trips/{trip_id}/submit").json()
+    assert result["committed"] == 1
+    assert len(grocy.tables["products"]) == 1  # not created twice
+    assert len(grocy.tables["quantity_unit_conversions"]) == 1
+    assert grocy.tables["products"][0]["qu_id_purchase"] == 2
+    assert grocy.bookings[0]["amount"] == 24
+
+
+def test_pack_draft_validation(authed, grocy):
+    trip_id, item = _scan_new(authed, grocy)
+    url = f"/api/trips/{trip_id}/items/{item['id']}"
+    no_unit = {**EGG_PACK, "pack_qu_id": None}
+    assert authed.patch(url, json={"new_product": no_unit}).status_code == 422
+    same_unit = {**EGG_PACK, "pack_qu_id": 1}
+    assert authed.patch(url, json={"new_product": same_unit}).status_code == 422
+    assert authed.patch(url, json={"new_product": {**EGG_PACK, "pack_size": 0}}).status_code == 422
+    plain = {k: v for k, v in EGG_PACK.items() if not k.startswith("pack")}
+    trip = authed.patch(url, json={"new_product": plain}).json()
+    assert (trip["items"][0]["pack_factor"], trip["items"][0]["pack_unit"]) == (1, "Piece")
+
+
 def test_revision_moves_with_every_change_so_other_devices_can_follow(authed, grocy, monkeypatch):
     stock_walmart_products(grocy)
     trip = authed.post("/api/trips", json={}).json()
