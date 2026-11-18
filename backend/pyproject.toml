@@ -1,6 +1,6 @@
 [project]
 name = "grocy-assistant"
-version = "0.2.0"
+version = "0.3.0"
 description = "Scan barcodes, snap receipts, and let Grocy do the bookkeeping."
 requires-python = ">=3.12"
 dependencies = [
