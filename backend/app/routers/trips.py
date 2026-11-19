@@ -10,7 +10,7 @@ from ..ai.base import AIProvider
 from ..config import get_config
 from ..db import get_db
 from ..deps import current_user, get_ai, get_grocy, get_http
-from ..grocy.client import GrocyClient, MasterData, barcode_variants
+from ..grocy.client import GrocyClient, GrocyError, MasterData, barcode_variants
 from ..lookup.openfoodfacts import lookup_barcode
 from ..models import Receipt, ReceiptImage, ReceiptLine, StoreMapping, Trip, TripItem, User
 from ..schemas import (
@@ -178,10 +178,18 @@ def _respond(db: Session, trip: Trip, md: MasterData, ai: AIProvider | None) -> 
 
 
 @router.get("/trips", response_model=list[TripSummary])
-def list_trips(_: User = Depends(current_user), db: Session = Depends(get_db)):
+async def list_trips(
+    _: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    grocy: GrocyClient = Depends(get_grocy),
+):
     """All household trips, newest first."""
+    try:
+        md: MasterData | None = await _md(grocy)
+    except GrocyError:
+        md = None  # the list still shows, with the store names read off the receipts
     trips = db.scalars(select(Trip).order_by(Trip.created_at.desc()).limit(100))
-    return [trip_summary(t) for t in trips]
+    return [trip_summary(t, md) for t in trips]
 
 
 @router.post("/trips", response_model=TripOut, status_code=201)

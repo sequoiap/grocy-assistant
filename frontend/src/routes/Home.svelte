@@ -43,6 +43,12 @@
     }
   }
 
+  /** A name you gave the trip wins; then where it was bought; then its date. */
+  function historyTitle(t: TripSummary): string {
+    if (t.name.trim() || t.kind === 'inventory' || !t.stores.length) return tripTitle(t);
+    return listJoin(t.stores);
+  }
+
   function summary(t: TripSummary): string {
     const parts = [plural(t.item_count, t.kind === 'inventory' ? 'product' : 'item')];
     if (t.committed_count && t.committed_count < t.item_count) parts.push(`${qty(t.committed_count)} already in Grocy`);
@@ -124,7 +130,7 @@
             <a href={`/trips/${t.id}/review`} class="hist-row">
               <span class="h-date">{shortDate(t.submitted_at ?? t.created_at)}</span>
               <span class="h-main">
-                <span class="h-stores">{t.kind !== 'inventory' && t.stores.length ? listJoin(t.stores) : tripTitle(t)}</span>
+                <span class="h-stores">{historyTitle(t)}</span>
                 <span class="small muted">{plural(t.item_count, 'item')}, by {t.created_by}</span>
               </span>
               <span class="h-total">{money(t.total)}</span>

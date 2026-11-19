@@ -356,3 +356,21 @@ def test_revision_column_is_added_to_an_older_database(tmp_path, monkeypatch):
     check.close()
     db.reset_engine()
     config.get_config.cache_clear()
+
+
+def test_trip_list_names_the_store_as_grocy_does(authed, grocy, monkeypatch):
+    trip_id = authed.post("/api/trips", json={}).json()["id"]
+    trip = upload_walmart_receipt(authed, monkeypatch, trip_id)
+    receipt_id = trip["receipts"][0]["id"]
+    # The receipt's own reading of the store, as OCR might garble it.
+    authed.patch(
+        f"/api/receipts/{receipt_id}",
+        json={"store_name": "W Al Mart", "shopping_location_id": None},
+    )
+
+    def listed():
+        return next(t for t in authed.get("/api/trips").json() if t["id"] == trip_id)["stores"]
+
+    assert listed() == ["W Al Mart"]
+    authed.patch(f"/api/receipts/{receipt_id}", json={"shopping_location_id": 1})
+    assert listed() == ["Walmart"]
