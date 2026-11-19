@@ -17,7 +17,8 @@
     position: sticky;
     top: 0;
     z-index: 20;
-    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    /* A page with more sticky bars under this one sets it opaque (--topbar-bg). */
+    background: var(--topbar-bg, color-mix(in srgb, var(--paper) 88%, transparent));
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);

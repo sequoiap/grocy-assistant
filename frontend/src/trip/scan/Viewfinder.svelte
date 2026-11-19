@@ -1,6 +1,13 @@
+<script lang="ts" module>
+  // Turned off by hand: stays off (no auto-start) until turned on again, also when the
+  // person leaves the Scan step and comes back, for as long as the page is open.
+  let turnedOff = false;
+</script>
+
 <script lang="ts">
-  // Live camera with continuous barcode detection. Pauses when the tab is hidden
-  // and stops entirely when unmounted (leaving the Scan step).
+  // Live camera with continuous barcode detection. Pauses when the tab is hidden,
+  // can be turned off by hand (walking to the next cupboard), and stops entirely
+  // when unmounted (leaving the Scan step).
   import { onDestroy, onMount } from 'svelte';
   import Icon from '../../components/Icon.svelte';
   import { unlockAudio } from '../../lib/feedback';
@@ -36,7 +43,8 @@
 
   const DEVICE_KEY = 'ga.cameraId';
 
-  type Phase = 'idle' | 'starting' | 'live' | 'paused' | 'problem';
+  // off: turned off by hand; only the person turns it back on.
+  type Phase = 'idle' | 'starting' | 'live' | 'paused' | 'off' | 'problem';
   let phase = $state<Phase>('idle');
   let problem = $state<CameraProblem | null>(null);
   let problemDetail = $state('');
@@ -62,6 +70,7 @@
 
   async function start() {
     if (destroyed || phase === 'starting') return;
+    turnedOff = false;
     unlockAudio();
     phase = 'starting';
     problem = null;
@@ -116,6 +125,13 @@
     if (running) loopTimer = setTimeout(loop, detector.native ? 100 : 150);
   }
 
+  function turnOff() {
+    stop();
+    turnedOff = target === 'barcode';
+    torch = false;
+    phase = 'off';
+  }
+
   async function toggleTorch() {
     if (!stream) return;
     try {
@@ -168,6 +184,10 @@
     if (!window.isSecureContext) {
       phase = 'problem';
       problem = 'insecure';
+      return;
+    }
+    if (turnedOff && target === 'barcode') {
+      phase = 'off';
       return;
     }
     // Start straight away when the camera was allowed before; otherwise wait for a tap,
@@ -229,6 +249,9 @@
     <div class="frame" class:qr={target === 'qr'} aria-hidden="true">
       {#if target === 'barcode'}<span></span>{/if}
     </div>
+    <button type="button" class="ctl off-btn" onclick={turnOff} aria-label="Turn the camera off">
+      <Icon name="cameraOff" size={20} /> <span>Camera off</span>
+    </button>
     <div class="controls">
       {#if canTorch}
         <button type="button" class="ctl" class:on={torch} aria-pressed={torch} onclick={toggleTorch} aria-label="Torch">
@@ -255,6 +278,11 @@
       {:else if phase === 'starting'}
         <span class="spinner big"></span>
         <p class="c-title">Starting the camera…</p>
+      {:else if phase === 'off'}
+        <button type="button" class="btn primary big start" onclick={start}>
+          <Icon name="camera" size={26} /> Turn the camera on
+        </button>
+        <p class="c-body">The camera is off, so nothing gets scanned while you move around.</p>
       {:else}
         <button type="button" class="btn primary big start" onclick={start}>
           <Icon name="camera" size={26} /> Start scanning
@@ -355,6 +383,19 @@
     background: rgba(7, 12, 29, 0.6);
     color: #fff;
     cursor: pointer;
+  }
+  .off-btn {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: auto;
+    border-radius: 999px;
+    padding: 0 16px 0 12px;
+    display: flex;
+    gap: 8px;
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 700;
   }
   .ctl.on {
     background: var(--saffron);

@@ -43,6 +43,9 @@ class FakeGrocy:
         self.undone: list[str] = []
         self.off_products: dict[str, dict] = {}
         self.fail_add_for: set[int] = set()
+        self.fail_add_after: dict[int, int] = {}  # product id -> bookings that succeed first
+        self.fail_undo: set[str] = set()  # transaction ids whose undo answers 400
+        self.stock: dict[int, float] = {}  # stock there before any booking: product -> amount
         self.fail_create: set[str] = set()  # object tables whose POST answers 400
 
         self.users: dict[int, dict] = {}
@@ -271,6 +274,10 @@ class FakeGrocy:
             pid = int(m[1])
             if pid in self.fail_add_for:
                 return httpx.Response(400, json={"error_message": "Product is broken"})
+            if pid in self.fail_add_after:
+                if self.fail_add_after[pid] <= 0:
+                    return httpx.Response(400, json={"error_message": "Out of room"})
+                self.fail_add_after[pid] -= 1
             body = json.loads(request.content)
             tid = f"tx{len(self.bookings) + 1}"
             self.bookings.append(
@@ -278,8 +285,17 @@ class FakeGrocy:
             )
             return httpx.Response(200, json=[{"transaction_id": tid}])
         if m := re.fullmatch(r"/stock/transactions/(\w+)/undo", path):
+            if m[1] in self.fail_undo:
+                return httpx.Response(400, json={"error_message": "Undo is broken"})
             self.undone.append(m[1])
             return httpx.Response(204)
+        if path == "/stock":
+            amounts: dict[int, float] = dict(self.stock)
+            for b in self.bookings:
+                if b["transaction_id"] not in self.undone:
+                    amounts[b["product_id"]] = amounts.get(b["product_id"], 0) + b["amount"]
+            rows = [{"product_id": pid, "amount": a} for pid, a in amounts.items() if a > 0]
+            return httpx.Response(200, json=rows)
         return httpx.Response(404, json={"error_message": f"no route {path}"})
 
 

@@ -120,6 +120,15 @@ export interface ProductHit {
 
 export type ItemState = 'needs_product' | 'ready' | 'committed' | 'failed' | 'skipped';
 
+/** shopping: things just bought (purchases, receipts). inventory: counting what's already at home. */
+export type TripKind = 'shopping' | 'inventory';
+
+/** Part of an item's quantity with a due date of its own; amount in the same unit as `quantity`. */
+export interface Lot {
+  amount: number;
+  due_date: string; // ISO date or "never"
+}
+
 export interface LookupOut {
   found: boolean;
   name: string;
@@ -155,6 +164,10 @@ export interface ItemOut {
   price_source: 'manual' | 'receipt' | null;
   unit_price: number | null;
 
+  /** Parts of the quantity with their own due dates. */
+  lots: Lot[];
+  /** What the lots leave over; due on `due_date` (the product's default unless set). */
+  rest_amount: number;
   due_date: string; // ISO date or "never"
   due_source: 'manual' | 'default';
   location_id: number | null;
@@ -165,6 +178,8 @@ export interface ItemOut {
   match_score: number | null;
   match_method: 'upc' | 'learned' | 'fuzzy' | 'ai' | 'manual' | null;
 
+  /** How much Grocy has in stock right now (in stock_unit), for existing products; null when unknown. */
+  in_stock: number | null;
   warnings: string[];
   error: string | null;
   committed_amount: number | null;
@@ -185,10 +200,21 @@ export interface ItemPatch {
   quantity?: number | null;
   line_total?: number | null;
   due_date?: string | null;
+  /** Replaces the lots; [] or null removes them. More than the quantity raises it. */
+  lots?: Lot[] | null;
   location_id?: number | null;
   shopping_location_id?: number | null;
   note?: string | null;
   receipt_line_id?: number | null;
+  skipped?: boolean | null;
+}
+
+/** The same change to several items (bulk edit). null goes back to the derived value. */
+export interface BulkItemPatch {
+  item_ids: number[];
+  due_date?: string | null;
+  location_id?: number | null;
+  shopping_location_id?: number | null;
   skipped?: boolean | null;
 }
 
@@ -259,11 +285,14 @@ export interface LineItemCreate {
 export interface TripSummary {
   id: number;
   name: string;
+  kind: TripKind;
   status: 'open' | 'submitted';
   created_at: string;
   submitted_at: string | null;
   created_by: string;
   item_count: number;
+  /** Items already booked into Grocy. */
+  committed_count: number;
   receipt_count: number;
   stores: string[];
   total: number | null;

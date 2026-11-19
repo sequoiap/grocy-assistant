@@ -7,7 +7,7 @@
   import Icon from '../../components/Icon.svelte';
   import ProductPicker from '../../components/ProductPicker.svelte';
   import StoreSelect from '../../components/StoreSelect.svelte';
-  import DueField from './DueField.svelte';
+  import LotsEditor from './LotsEditor.svelte';
   import NewProductForm from './NewProductForm.svelte';
   import type { TripStore } from '../trip.svelte';
 
@@ -20,6 +20,7 @@
   let draftCalm = $state(false);
   let confirmRemove = $state(false);
 
+  const inventory = $derived(store.trip?.kind === 'inventory');
   const receipts = $derived((store.trip?.receipts ?? []).filter((r) => r.status === 'ready' && r.lines.length));
   const itemNames = $derived(new Map((store.trip?.items ?? []).map((i) => [i.id, i.name])));
 
@@ -132,14 +133,14 @@
       </small>
     </label>
     <label class="field">
-      <span>Price paid</span>
+      <span>{inventory ? 'What it cost' : 'Price paid'} {#if inventory}<span class="opt">(optional)</span>{/if}</span>
       <input
         type="number"
         inputmode="decimal"
         min="0"
         step="0.01"
         value={item.line_total ?? ''}
-        placeholder="Unknown"
+        placeholder={inventory ? 'Leave empty if unknown' : 'Unknown'}
         onchange={(e) => {
           const n = numberFrom(e);
           if (n === null || (n >= 0 && !Number.isNaN(n))) void patch({ line_total: n });
@@ -156,7 +157,7 @@
   </section>
 
   <section class="block">
-    <DueField value={item.due_date} source={item.due_source} onchange={(v) => patch({ due_date: v })} />
+    <LotsEditor {item} onlots={(lots) => patch({ lots })} ondue={(v) => patch({ due_date: v })} />
   </section>
 
   <section class="block two">
@@ -172,8 +173,8 @@
     </label>
     <StoreSelect
       value={item.shopping_location_id}
-      label="Bought at"
-      emptyLabel="Not set"
+      label={inventory ? 'Bought at (optional)' : 'Bought at'}
+      emptyLabel={inventory ? "Don't know" : 'Not set'}
       onchange={(id) => patch({ shopping_location_id: id })}
     />
   </section>
@@ -199,7 +200,7 @@
       </button>
     {/if}
     {#if !confirmRemove}
-      <button type="button" class="btn danger" onclick={() => (confirmRemove = true)}><Icon name="trash" size={20} /> Remove from trip</button>
+      <button type="button" class="btn danger" onclick={() => (confirmRemove = true)}><Icon name="trash" size={20} /> Remove from {inventory ? 'inventory' : 'trip'}</button>
     {:else}
       <button type="button" class="btn danger" onclick={() => store.run(() => api.deleteItem(store.id, item.id), { success: `Removed ${item.name}` })}>
         <Icon name="trash" size={20} /> Yes, remove it

@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { api, errorMessage } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import { money, plural, shortDate, tripTitle, listJoin } from '../lib/format';
+  import { money, plural, qty, shortDate, tripTitle, listJoin } from '../lib/format';
   import { toasts } from '../lib/ui.svelte';
-  import type { TripSummary } from '../lib/types';
+  import type { TripKind, TripSummary } from '../lib/types';
   import Icon from '../components/Icon.svelte';
   import Mark from '../components/Mark.svelte';
   import TopBar from '../components/TopBar.svelte';
@@ -12,7 +12,7 @@
 
   let trips = $state<TripSummary[] | null>(null);
   let error = $state<string | null>(null);
-  let starting = $state(false);
+  let starting = $state<TripKind | null>(null);
   let joinOpen = $state(false);
 
   const open = $derived((trips ?? []).filter((t) => t.status === 'open'));
@@ -31,20 +31,21 @@
     void load();
   });
 
-  async function start() {
-    starting = true;
+  async function start(kind: TripKind = 'shopping') {
+    starting = kind;
     try {
-      const trip = await api.createTrip();
+      const trip = await api.createTrip(kind);
       navigate(`/trips/${trip.id}/scan`);
     } catch (err) {
       toasts.error(errorMessage(err));
     } finally {
-      starting = false;
+      starting = null;
     }
   }
 
   function summary(t: TripSummary): string {
-    const parts = [plural(t.item_count, 'item')];
+    const parts = [plural(t.item_count, t.kind === 'inventory' ? 'product' : 'item')];
+    if (t.committed_count && t.committed_count < t.item_count) parts.push(`${qty(t.committed_count)} already in Grocy`);
     if (t.receipt_count) parts.push(plural(t.receipt_count, 'receipt'));
     return parts.join(', ');
   }
@@ -66,9 +67,14 @@
   <section class="open" aria-labelledby="open-h">
     <div class="section-head">
       <h1 id="open-h">{open.length ? 'In progress' : 'Back from the shops?'}</h1>
-      <button type="button" class="btn primary wide-only" onclick={start} disabled={starting}>
-        <Icon name="plus" /> Start a shopping trip
-      </button>
+      <div class="starts wide-only">
+        <button type="button" class="btn" onclick={() => start('inventory')} disabled={starting !== null}>
+          <Icon name="box" /> Take inventory
+        </button>
+        <button type="button" class="btn primary" onclick={() => start()} disabled={starting !== null}>
+          <Icon name="plus" /> Start a shopping trip
+        </button>
+      </div>
     </div>
 
     {#if trips === null && !error}
@@ -81,11 +87,15 @@
         <li><Icon name="receipt" /> <span><strong>Photograph</strong> the receipt, or several if you went to more than one shop.</span></li>
         <li><Icon name="check" /> <span><strong>Check</strong> the list and add it all to Grocy with one tap.</span></li>
       </ol>
+      <p class="inv-hint small muted">
+        Setting up Grocy for the first time? <strong>Take inventory</strong> instead: scan what's already in the
+        cupboards, with no receipt or prices needed.
+      </p>
     {:else}
       <ul class="open-list">
         {#each open as t (t.id)}
           <li>
-            <a class="open-trip" href={`/trips/${t.id}`}>
+            <a class="open-trip" class:inventory={t.kind === 'inventory'} href={`/trips/${t.id}`}>
               <span class="ot-title">{tripTitle(t)}</span>
               <span class="ot-meta">
                 {summary(t)}{#if t.stores.length}, from {listJoin(t.stores)}{/if}
@@ -114,7 +124,7 @@
             <a href={`/trips/${t.id}/review`} class="hist-row">
               <span class="h-date">{shortDate(t.submitted_at ?? t.created_at)}</span>
               <span class="h-main">
-                <span class="h-stores">{t.stores.length ? listJoin(t.stores) : tripTitle(t)}</span>
+                <span class="h-stores">{t.kind !== 'inventory' && t.stores.length ? listJoin(t.stores) : tripTitle(t)}</span>
                 <span class="small muted">{plural(t.item_count, 'item')}, by {t.created_by}</span>
               </span>
               <span class="h-total">{money(t.total)}</span>
@@ -129,15 +139,29 @@
 <JoinTrip bind:open={joinOpen} />
 
 <div class="dock narrow-only">
-  <button type="button" class="btn primary big block" onclick={start} disabled={starting}>
-    {#if starting}<span class="spinner"></span>{:else}<Icon name="plus" size={26} />{/if}
+  <button type="button" class="btn primary big block" onclick={() => start()} disabled={starting !== null}>
+    {#if starting === 'shopping'}<span class="spinner"></span>{:else}<Icon name="plus" size={26} />{/if}
     Start a shopping trip
+  </button>
+  <button type="button" class="btn block" onclick={() => start('inventory')} disabled={starting !== null}>
+    {#if starting === 'inventory'}<span class="spinner"></span>{:else}<Icon name="box" />{/if}
+    Take inventory
   </button>
 </div>
 
 <style>
   .join {
     margin: 4px 0 0;
+  }
+  .starts {
+    gap: 10px;
+  }
+  .inv-hint {
+    margin-top: 12px;
+    max-width: 60ch;
+  }
+  .open-trip.inventory {
+    border-left-color: var(--basil);
   }
   .brand {
     display: flex;
@@ -147,7 +171,7 @@
     font-size: 1.125rem;
   }
   .home {
-    padding-bottom: calc(var(--safe-b) + 120px);
+    padding-bottom: calc(var(--safe-b) + 180px);
     display: grid;
     gap: 36px;
     padding-top: 24px;
@@ -259,6 +283,8 @@
     font-weight: 700;
   }
   .dock {
+    display: grid;
+    gap: 8px;
     position: fixed;
     left: 0;
     right: 0;

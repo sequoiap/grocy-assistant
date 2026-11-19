@@ -72,8 +72,14 @@ export function dueLabel(due: string): string {
   return `Due ${shortDate(due)}`;
 }
 
-export function tripTitle(trip: { name: string; created_at: string }): string {
-  return trip.name.trim() || `Shopping on ${longDate(trip.created_at)}`;
+export function tripTitle(trip: { name: string; created_at: string; kind?: string }): string {
+  const what = trip.kind === 'inventory' ? 'Inventory' : 'Shopping';
+  return trip.name.trim() || `${what} on ${longDate(trip.created_at)}`;
+}
+
+/** What to call a trip in prose: "trip", or "inventory" when counting stock. */
+export function tripNoun(kind: string | undefined): string {
+  return kind === 'inventory' ? 'inventory' : 'trip';
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {

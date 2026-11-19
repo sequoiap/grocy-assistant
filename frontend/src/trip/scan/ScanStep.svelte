@@ -2,7 +2,7 @@
   import { api, errorMessage } from '../../lib/api';
   import { beep, buzz, setSoundEnabled, soundEnabled } from '../../lib/feedback';
   import { navigate } from '../../lib/router.svelte';
-  import { plural } from '../../lib/format';
+  import { plural, qty } from '../../lib/format';
   import { toasts, viewport } from '../../lib/ui.svelte';
   import { tripIdFromLink } from '../../lib/triplink';
   import type { IdName, ItemOut } from '../../lib/types';
@@ -15,7 +15,10 @@
 
   let { store }: { store: TripStore } = $props();
 
+  // A code still in view isn't counted again until it has been out of view this long.
+  // Shorter when counting stock, where the next identical can is the point.
   const COOLDOWN_MS = 2500;
+  const COUNTING_COOLDOWN_MS = 1200;
 
   type Last =
     | { kind: 'known' | 'new' | 'repeat'; item: ItemOut }
@@ -41,13 +44,14 @@
       .sort((a, b) => (touched[b.id] ?? 0) - (touched[a.id] ?? 0) || b.id - a.id),
   );
   const needCount = $derived(items.filter((i) => i.state === 'needs_product').length);
+  const inventory = $derived(store.trip?.kind === 'inventory');
 
   function fromCamera(code: string) {
     const now = performance.now();
     const prev = seen.get(code);
     seen.set(code, now);
     // Ignore a code that's still in view; it counts again once it has left for a moment.
-    if (prev !== undefined && now - prev < COOLDOWN_MS) return;
+    if (prev !== undefined && now - prev < (inventory ? COUNTING_COOLDOWN_MS : COOLDOWN_MS)) return;
     void accept(code);
   }
 
@@ -117,7 +121,9 @@
       case 'known':
         return { tone: 'ok', text: last.item.name };
       case 'repeat':
-        return { tone: 'ok', text: `${last.item.name} again (scanned ${last.item.scan_count}×)` };
+        return inventory
+          ? { tone: 'ok', text: `${last.item.name}: ${qty(last.item.quantity)} counted` }
+          : { tone: 'ok', text: `${last.item.name} again (scanned ${last.item.scan_count}×)` };
       case 'new':
         return {
           tone: 'new',
@@ -136,7 +142,10 @@
     {#if store.readOnly}
       <div class="locked note">
         <Icon name="info" size={18} />
-        <p>This trip is already in Grocy. To scan more, undo it on the Review step, or start a new trip.</p>
+        <p>
+          This {inventory ? 'inventory' : 'trip'} is already in Grocy. To scan more, undo it on the Review step, or start a new
+          {inventory ? 'inventory' : 'trip'}.
+        </p>
       </div>
     {:else}
       {#if !viewport.coarse}
@@ -144,7 +153,7 @@
           <Icon name="phone" size={26} />
           <span>
             <strong>Scanning is easier with your phone.</strong>
-            <span class="muted">Show a code to open this trip there; what you scan appears here.</span>
+            <span class="muted">Show a code to open this {inventory ? 'inventory' : 'trip'} there; what you scan appears here.</span>
           </span>
           <Icon name="forward" size={20} />
         </button>
@@ -181,7 +190,14 @@
       {/if}
     </header>
     {#if items.length === 0 && pending.length === 0}
-      <p class="muted empty">Scan each product once. The receipt decides how many you bought, so there's no need to scan duplicates.</p>
+      {#if inventory}
+        <p class="muted empty">
+          Scan every piece: scanning the same thing again counts one more. Or scan one and set the count with − and +.
+          Turn the camera off while you walk to the next cupboard.
+        </p>
+      {:else}
+        <p class="muted empty">Scan each product once. The receipt decides how many you bought, so there's no need to scan duplicates.</p>
+      {/if}
     {/if}
     <ul>
       {#each pending as code (code)}
@@ -193,14 +209,23 @@
           href={`/trips/${store.id}/review#item-${item.id}`}
           fresh={freshId === item.id}
           onremove={store.readOnly || item.state === 'committed' ? undefined : () => remove(item)}
+          onquantity={inventory && !store.readOnly && item.state !== 'committed'
+            ? (v) => store.run(() => api.patchItem(store.id, item.id, { quantity: v }))
+            : undefined}
         />
       {/each}
     </ul>
     {#if items.length > 0 && !store.readOnly}
       <div class="next">
-        <button type="button" class="btn block" onclick={() => navigate(`/trips/${store.id}/receipts`, { replace: true })}>
-          Done scanning? Add the receipt <Icon name="forward" size={20} />
-        </button>
+        {#if inventory}
+          <button type="button" class="btn block" onclick={() => navigate(`/trips/${store.id}/review`, { replace: true })}>
+            Done counting? Add due dates and review <Icon name="forward" size={20} />
+          </button>
+        {:else}
+          <button type="button" class="btn block" onclick={() => navigate(`/trips/${store.id}/receipts`, { replace: true })}>
+            Done scanning? Add the receipt <Icon name="forward" size={20} />
+          </button>
+        {/if}
       </div>
     {/if}
   </section>

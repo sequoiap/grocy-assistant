@@ -2,6 +2,7 @@
 import type {
   AIScope,
   AISettingsIn,
+  BulkItemPatch,
   GrocyMeta,
   IdName,
   ItemCreate,
@@ -17,6 +18,7 @@ import type {
   SubmitResult,
   TestResult,
   TripOut,
+  TripKind,
   TripSummary,
   UserOut,
 } from './types';
@@ -252,7 +254,7 @@ export const api = {
 
   // trips
   trips: () => get<TripSummary[]>('/trips'),
-  createTrip: (name = '') => post<TripOut>('/trips', { name }),
+  createTrip: (kind: TripKind = 'shopping', name = '') => post<TripOut>('/trips', { name, kind }),
   trip: (id: number) => get<TripOut>(`/trips/${id}`),
   /** Cheap check for changes made on another device; never signs the user out. */
   tripRevision: (id: number) => request<{ revision: number }>('GET', `/trips/${id}/revision`, { quiet401: true }),
@@ -262,6 +264,7 @@ export const api = {
   addItem: (id: number, body: ItemCreate) => post<TripOut>(`/trips/${id}/items`, body),
   patchItem: (id: number, itemId: number, body: ItemPatch) =>
     patch<TripOut>(`/trips/${id}/items/${itemId}`, body),
+  patchItems: (id: number, body: BulkItemPatch) => patch<TripOut>(`/trips/${id}/items`, body),
   deleteItem: (id: number, itemId: number) => del<TripOut>(`/trips/${id}/items/${itemId}`),
   uploadReceipt: (id: number, files: Blob[], onProgress?: (f: number) => void) => {
     const form = new FormData();

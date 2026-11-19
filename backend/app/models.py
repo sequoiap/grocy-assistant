@@ -79,6 +79,9 @@ class Trip(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     name: Mapped[str] = mapped_column(String(120), default="")
+    # shopping: things just bought (purchases, usually with a receipt).
+    # inventory: counting what is already in the house (inventory corrections, no receipt).
+    kind: Mapped[str] = mapped_column(String(16), default="shopping", server_default="shopping")
     status: Mapped[str] = mapped_column(String(16), default="open")  # open | submitted
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -117,6 +120,9 @@ class TripItem(Base):
     quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
     line_total: Mapped[float | None] = mapped_column(Float, nullable=True)
     due_date: Mapped[str | None] = mapped_column(String(10), nullable=True)  # ISO | "never"
+    # Some of the quantity has its own due date: [{"amount": 2, "due_date": "2026-12-01"}],
+    # amounts in the same unit as `quantity`. Whatever they leave over uses `due_date`.
+    lots: Mapped[list | None] = mapped_column(JSON, nullable=True)
     location_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     shopping_location_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -132,6 +138,10 @@ class TripItem(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     transaction_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Every Grocy booking made for this item (one per due date), recorded as each is
+    # made. Non-empty on an item that isn't committed means a booking that couldn't be
+    # rolled back yet; the next submit or undo takes it back out first.
+    transaction_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     committed_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

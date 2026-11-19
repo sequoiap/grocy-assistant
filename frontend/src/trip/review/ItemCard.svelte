@@ -18,6 +18,15 @@
   const line = $derived(item.receipt_line_id != null ? store.lineById.get(item.receipt_line_id) : undefined);
   const needs = $derived(item.state === 'needs_product');
   const locked = $derived(store.readOnly || item.state === 'committed');
+  const inventory = $derived(store.trip?.kind === 'inventory');
+  const dueText = $derived.by(() => {
+    if (!item.lots.length) return dueLabel(item.due_date);
+    const n = item.lots.length + (item.rest_amount > 0 ? 1 : 0);
+    const dates = [...item.lots.map((l) => l.due_date), ...(item.rest_amount > 0 ? [item.due_date] : [])]
+      .filter((d) => d !== 'never')
+      .sort();
+    return dates.length ? `${n} dates, first ${dueLabel(dates[0]).replace(/^Due /, '').toLowerCase()}` : `${n} dates`;
+  });
   const title = $derived(needs ? item.lookup?.suggested_name || line?.description || item.name : item.name);
 </script>
 
@@ -40,7 +49,7 @@
     <div class="price">
       {#if item.line_total != null}
         <span class="amount">{money(item.line_total)}</span>
-      {:else}
+      {:else if !inventory}
         <span class="amount muted none">No price</span>
       {/if}
     </div>
@@ -69,9 +78,9 @@
           {#if item.pack_factor !== 1}= {qty(item.stock_amount)} {item.stock_unit}{:else}{item.stock_unit}{/if}
         </span>
       {/if}
-      <span class="due small" class:never={item.due_date === 'never'}>
+      <span class="due small" class:never={item.due_date === 'never' && !item.lots.length}>
         <Icon name="calendar" size={16} />
-        {dueLabel(item.due_date)}
+        {dueText}
       </span>
     </div>
   {/if}

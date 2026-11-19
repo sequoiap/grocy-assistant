@@ -4,10 +4,12 @@
   let {
     value,
     source,
+    legend = 'Due date',
     onchange,
   }: {
     value: string; // ISO or "never"
     source: 'manual' | 'default';
+    legend?: string;
     /** null = back to the product's default */
     onchange: (v: string | null) => void;
   } = $props();
@@ -17,12 +19,12 @@
 </script>
 
 <fieldset class="due">
-  <legend>Best before</legend>
+  <legend>{legend}</legend>
   <div class="row">
     <input
       id="{uid}-date"
       type="date"
-      aria-label="Best before date"
+      aria-label="Due date"
       value={never ? '' : value}
       onchange={(e) => {
         const v = e.currentTarget.value;

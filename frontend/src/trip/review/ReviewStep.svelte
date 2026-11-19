@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, errorMessage, isGrocyUnreachable } from '../../lib/api';
-  import { plural, dateTime } from '../../lib/format';
+  import { plural, dateTime, qty, tripNoun } from '../../lib/format';
   import { navigate } from '../../lib/router.svelte';
   import { meta } from '../../lib/session.svelte';
-  import { toasts } from '../../lib/ui.svelte';
+  import { toasts, viewport } from '../../lib/ui.svelte';
   import type { ItemOut } from '../../lib/types';
   import Icon from '../../components/Icon.svelte';
   import Sheet from '../../components/Sheet.svelte';
   import ItemCard from './ItemCard.svelte';
+  import ItemEditor from './ItemEditor.svelte';
+  import ResolveProduct from './ResolveProduct.svelte';
+  import BulkTable from './BulkTable.svelte';
   import LineRow from './LineRow.svelte';
   import Reconcile from './Reconcile.svelte';
   import SubmitOutcome from './SubmitOutcome.svelte';
@@ -24,6 +27,68 @@
 
   const trip = $derived(store.trip!);
   const items = $derived(trip.items);
+  const inventory = $derived(trip.kind === 'inventory');
+  const noun = $derived(tripNoun(trip.kind));
+  const thing = $derived(inventory ? 'product' : 'item');
+  // Open, partly in Grocy already: some were added, others still wait for a product.
+  const partly = $derived(!store.readOnly && store.counts.committed > 0 && !store.lastSubmit);
+  const waiting = $derived(items.filter((i) => i.state !== 'committed' && i.state !== 'skipped').length);
+
+  // Cards suit a phone; a big screen can show everything as an editable table.
+  const VIEW_KEY = 'ga.reviewView';
+  let chosenView = $state<'cards' | 'table' | null>(readView());
+  const view = $derived(viewport.wide ? (chosenView ?? (inventory ? 'table' : 'cards')) : 'cards');
+
+  function readView(): 'cards' | 'table' | null {
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      return v === 'cards' || v === 'table' ? v : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setView(v: 'cards' | 'table') {
+    chosenView = v;
+    expanded = null;
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* not remembered */
+    }
+  }
+
+  // The table's "all details" sheet. Looked up by id so it follows live changes.
+  let detailId = $state<number | null>(null);
+  const detailItem = $derived(detailId == null ? null : (items.find((i) => i.id === detailId) ?? null));
+  let detailOpen = $state(false);
+  function openDetails(item: ItemOut) {
+    detailId = item.id;
+    detailOpen = true;
+  }
+
+  /** Rows of one product stay together, wherever the first of them was. */
+  function byProduct(list: ItemOut[]): ItemOut[] {
+    const key = (i: ItemOut) =>
+      i.product ? `p${i.product.id}` : i.new_product ? `n${i.new_product.name.toLowerCase()}` : `i${i.id}`;
+    const first = new Map<string, number>();
+    list.forEach((i, idx) => {
+      if (!first.has(key(i))) first.set(key(i), idx);
+    });
+    return list
+      .map((i, idx) => ({ i, idx }))
+      .sort((a, b) => first.get(key(a.i))! - first.get(key(b.i))! || a.idx - b.idx)
+      .map((x) => x.i);
+  }
+
+  const tableItems = $derived.by(() => {
+    const order = (i: ItemOut) =>
+      ({ needs_product: 0, failed: 1, ready: 2, skipped: 3, committed: 4 })[i.state] ?? 5;
+    return byProduct([...items].sort((a, b) => order(a) - order(b)));
+  });
+
+  const pieces = $derived(items.filter((i) => i.state !== 'skipped').reduce((n, i) => n + i.stock_amount, 0));
+  const dated = $derived(items.filter((i) => i.lots.length > 0 || i.due_source === 'manual').length);
 
   const groups = $derived.by(() => {
     const decide: ItemOut[] = [];
@@ -39,7 +104,7 @@
     // Items with something to check come first among the ready ones.
     ready.sort((a, b) => Number(b.warnings.length > 0) - Number(a.warnings.length > 0));
     decide.sort((a, b) => Number(a.state === 'failed') - Number(b.state === 'failed'));
-    return { decide, ready, skipped, done };
+    return { decide: byProduct(decide), ready: byProduct(ready), skipped, done: byProduct(done) };
   });
 
   const bulkCandidates = $derived(
@@ -113,7 +178,7 @@
     bulkBusy = false;
     if (grocyDown) store.report(grocyDown);
     else if (failures.length) toasts.error(`Some couldn't be set up. ${failures.join('. ')}`);
-    else toasts.success('New products set up. They are created in Grocy when you add the trip.');
+    else toasts.success('New products set up. They are created in Grocy when you press Add.');
   }
 
   async function submit() {
@@ -136,11 +201,30 @@
     if (ok) store.lastSubmit = null;
   }
 
-  const submitLabel = $derived(toAdd === 0 ? 'Nothing ready to add' : `Add ${plural(toAdd, 'item')} to Grocy`);
+  const submitLabel = $derived(
+    toAdd === 0
+      ? 'Nothing ready to add'
+      : store.counts.attention > 0
+        ? `Add the ${plural(toAdd, `ready ${thing}`)} now`
+        : inventory
+          ? `Add ${plural(toAdd, 'product')} to Grocy's stock`
+          : `Add ${plural(toAdd, 'item')} to Grocy`,
+  );
 </script>
 
-<div class="review" class:readonly={readOnly}>
+<div class="review" class:readonly={readOnly} class:table-view={view === 'table'}>
   <div class="main">
+    {#if viewport.wide && items.length > 0}
+      <div class="view-switch" role="group" aria-label="Show the items as">
+        <button type="button" class="btn small" class:ghost={view !== 'cards'} aria-pressed={view === 'cards'} onclick={() => setView('cards')}>
+          <Icon name="review" size={18} /> List
+        </button>
+        <button type="button" class="btn small" class:ghost={view !== 'table'} aria-pressed={view === 'table'} onclick={() => setView('table')}>
+          <Icon name="table" size={18} /> Table
+        </button>
+      </div>
+    {/if}
+
     {#if store.lastSubmit}
       <SubmitOutcome {store} result={store.lastSubmit} onretry={submit} onundo={() => (undoOpen = true)} onclose={() => (store.lastSubmit = null)} />
     {:else if readOnly}
@@ -148,20 +232,43 @@
         <Icon name="check" size={28} />
         <div>
           <p class="db-title">In Grocy since {trip.submitted_at ? dateTime(trip.submitted_at) : 'earlier'}</p>
-          <p class="small">To change something, undo the trip first. That takes its items back out of Grocy's stock.</p>
+          <p class="small">To change something, undo the {noun} first. That takes its {thing}s back out of Grocy's stock.</p>
         </div>
         <button type="button" class="btn" onclick={() => (undoOpen = true)}><Icon name="undo" size={20} /> Undo</button>
+      </div>
+    {/if}
+
+    {#if partly}
+      <div class="note partly">
+        <Icon name="info" size={18} />
+        <p>
+          <strong>{plural(store.counts.committed, thing)} already in Grocy</strong> (listed as In Grocy).
+          {#if waiting}{plural(waiting, 'other')} {waiting === 1 ? "isn't" : "aren't"} yet{#if store.counts.attention}: {store.counts.attention} still {store.counts.attention === 1 ? 'needs' : 'need'} a product first{/if}.{/if}
+        </p>
       </div>
     {/if}
 
     {#if items.length === 0}
       <div class="empty">
         <h2>Nothing to review yet</h2>
-        <p class="muted">Scan what you bought, or add a receipt and pick products from its lines.</p>
-        <div class="empty-actions">
-          <button type="button" class="btn primary" onclick={() => navigate(`/trips/${store.id}/scan`, { replace: true })}><Icon name="barcode" /> Scan items</button>
-          <button type="button" class="btn" onclick={() => navigate(`/trips/${store.id}/receipts`, { replace: true })}><Icon name="receipt" /> Add a receipt</button>
-        </div>
+        {#if inventory}
+          <p class="muted">
+            Scan what's in the cupboards, here or with your phone as the scanner. Everything you scan shows up here,
+            ready for amounts and due dates.
+          </p>
+          <div class="empty-actions">
+            <button type="button" class="btn primary" onclick={() => navigate(`/trips/${store.id}/scan`, { replace: true })}><Icon name="barcode" /> Start counting</button>
+            {#if viewport.wide}
+              <button type="button" class="btn" onclick={() => (store.linkOpen = true)}><Icon name="phone" /> Use phone as scanner</button>
+            {/if}
+          </div>
+        {:else}
+          <p class="muted">Scan what you bought, or add a receipt and pick products from its lines.</p>
+          <div class="empty-actions">
+            <button type="button" class="btn primary" onclick={() => navigate(`/trips/${store.id}/scan`, { replace: true })}><Icon name="barcode" /> Scan items</button>
+            <button type="button" class="btn" onclick={() => navigate(`/trips/${store.id}/receipts`, { replace: true })}><Icon name="receipt" /> Add a receipt</button>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -169,7 +276,19 @@
       <div class="note"><span class="spinner"></span><p>A receipt is still being read. Amounts and prices fill in when it's done.</p></div>
     {/if}
 
-    {#if groups.decide.length}
+    {#if view === 'table' && items.length > 0}
+      {#if bulkCandidates.length > 1 && !readOnly}
+        <div class="bulk">
+          <p class="small">{bulkCandidates.length} new products have names from the barcode lookup.</p>
+          <button type="button" class="btn small" onclick={createAll} disabled={bulkBusy}>
+            {#if bulkBusy}<span class="spinner"></span>{/if} Create all with these names
+          </button>
+        </div>
+      {/if}
+      <BulkTable {store} items={tableItems} onopen={openDetails} />
+    {/if}
+
+    {#if view === 'cards' && groups.decide.length}
       <section class="group" aria-labelledby="g-decide">
         <header class="g-head">
           <h2 id="g-decide"><span class="dot attention"></span> {groups.decide.some((i) => i.state === 'needs_product') ? 'Needs a decision' : "Couldn't be added"}</h2>
@@ -191,7 +310,7 @@
       </section>
     {/if}
 
-    {#if groups.ready.length}
+    {#if view === 'cards' && groups.ready.length}
       <section class="group" aria-labelledby="g-ready">
         <header class="g-head">
           <h2 id="g-ready"><span class="dot ready"></span> Ready to add</h2>
@@ -220,7 +339,7 @@
       </section>
     {/if}
 
-    {#if groups.skipped.length}
+    {#if view === 'cards' && groups.skipped.length}
       <section class="group" aria-labelledby="g-skipped">
         <header class="g-head">
           <h2 id="g-skipped"><span class="dot"></span> Not adding</h2>
@@ -245,7 +364,7 @@
       </details>
     {/if}
 
-    {#if groups.done.length}
+    {#if view === 'cards' && groups.done.length}
       <section class="group" aria-labelledby="g-done">
         <header class="g-head">
           <h2 id="g-done"><span class="dot done"></span> In Grocy</h2>
@@ -262,11 +381,26 @@
 
   {#if items.length > 0}
     <aside class="aside" aria-label="Summary">
-      <Reconcile {store} />
+      {#if inventory}
+        <div class="inv-summary">
+          <p><strong>{plural(items.length, 'product')}</strong>, {qty(pieces)} in all</p>
+          <p class="small muted">
+            {#if dated}{plural(dated, 'product')} with due dates you set; the rest use their usual shelf life.{:else}Due dates are each product's usual shelf life until you set them.{/if}
+            Added as an inventory correction, not a purchase.
+          </p>
+        </div>
+      {:else}
+        <Reconcile {store} />
+      {/if}
       {#if !readOnly}
         <div class="submit-bar">
           {#if store.counts.attention > 0 && toAdd > 0}
-            <p class="hint small">{plural(store.counts.attention, 'item')} still {store.counts.attention === 1 ? 'needs' : 'need'} a decision and will wait here.</p>
+            <p class="hint small">
+              Adds the {qty(toAdd)} ready now. {plural(store.counts.attention, thing)} without a product {store.counts.attention === 1 ? "isn't" : "aren't"}
+              included: {store.counts.attention === 1 ? 'it stays' : 'they stay'} here until you choose one, then add {store.counts.attention === 1 ? 'it' : 'them'} with this button.
+            </p>
+          {:else if store.counts.attention > 0}
+            <p class="hint small">First choose a product for each {thing} Grocy doesn't know yet.</p>
           {:else if trip.processing}
             <p class="hint small">Waiting for the receipt to be read.</p>
           {/if}
@@ -284,15 +418,26 @@
   {/if}
 </div>
 
-<Sheet bind:open={undoOpen} title="Undo this trip?">
+<Sheet bind:open={detailOpen} title={detailItem?.name ?? 'Item'} wide onclose={() => (detailId = null)}>
+  {#if detailItem}
+    {#if detailItem.state === 'needs_product'}
+      <ResolveProduct {store} item={detailItem} />
+    {/if}
+    <ItemEditor {store} item={detailItem} />
+  {:else}
+    <p class="muted">This item isn't on the list any more.</p>
+  {/if}
+</Sheet>
+
+<Sheet bind:open={undoOpen} title="Undo this {noun}?">
   <p>
-    This takes the {plural(store.counts.committed, 'item')} this trip added back out of Grocy's stock and reopens the trip for changes.
+    This takes the {plural(store.counts.committed, thing)} this {noun} added back out of Grocy's stock and reopens the {noun} for changes.
     Products that were created stay in Grocy.
   </p>
   {#snippet footer()}
     <button type="button" class="btn" onclick={() => (undoOpen = false)}>Keep it</button>
     <button type="button" class="btn primary" onclick={undo} disabled={undoBusy}>
-      {#if undoBusy}<span class="spinner"></span>{:else}<Icon name="undo" size={20} />{/if} Undo trip
+      {#if undoBusy}<span class="spinner"></span>{:else}<Icon name="undo" size={20} />{/if} Undo {noun}
     </button>
   {/snippet}
 </Sheet>
@@ -300,6 +445,27 @@
 <style>
   .review {
     display: grid;
+  }
+  .view-switch {
+    display: flex;
+    gap: 6px;
+    justify-self: end;
+    padding-top: 6px;
+  }
+  .view-switch .btn[aria-pressed='true'] {
+    --btn-bg: var(--cobalt-soft);
+    --btn-fg: var(--cobalt);
+  }
+  .note.partly {
+    margin: 12px var(--gutter) 0;
+  }
+  .inv-summary {
+    display: grid;
+    gap: 6px;
+    padding: 16px;
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    border: 2px solid var(--line);
   }
   .main {
     display: grid;
@@ -495,6 +661,20 @@
       position: sticky;
       top: calc(var(--safe-t) + 136px);
       padding-top: 14px;
+    }
+    /* The table wants the full width; the summary and button sit above it. */
+    .review.table-view {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .table-view .aside {
+      position: static;
+      order: -1;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      align-items: center;
+      padding-top: 0;
+    }
+    .table-view .main {
+      gap: 10px;
     }
     .submit-bar {
       position: static;

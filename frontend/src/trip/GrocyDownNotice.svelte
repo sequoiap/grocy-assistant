@@ -3,7 +3,7 @@
   // Not the offline banner: that one is about this device's own connection.
   import Icon from '../components/Icon.svelte';
 
-  let { readOnly = false }: { readOnly?: boolean } = $props();
+  let { readOnly = false, noun = 'trip' }: { readOnly?: boolean; noun?: string } = $props();
 </script>
 
 <div class="grocy-down" role="status">
@@ -12,9 +12,9 @@
     <p>
       <strong>Grocy can't be reached right now.</strong>
       {#if readOnly}
-        You can still look through this trip. Undo will work once Grocy is back.
+        You can still look through this {noun}. Undo will work once Grocy is back.
       {:else}
-        Scanning and editing still work, and this trip is saved. You can add it to Grocy once it's back.
+        Scanning and editing still work, and this {noun} is saved. You can add it to Grocy once it's back.
       {/if}
     </p>
   </div>

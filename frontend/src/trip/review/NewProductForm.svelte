@@ -150,7 +150,7 @@
       {submitLabel}
     </button>
   </div>
-  <p class="small muted">The product is created in Grocy when you add the trip.</p>
+  <p class="small muted">The product is created in Grocy when you add it with the Add button.</p>
 </form>
 
 <style>

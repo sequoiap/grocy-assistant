@@ -133,6 +133,15 @@ class StoreCreate(BaseModel):
 # --- trips -----------------------------------------------------------------
 
 ItemState = Literal["needs_product", "ready", "committed", "failed", "skipped"]
+TripKind = Literal["shopping", "inventory"]
+
+
+class Lot(BaseModel):
+    """Part of an item's quantity with a due date of its own (e.g. 2 of the 5 cans
+    are due in March). Amounts are in the same unit as the item's `quantity`."""
+
+    amount: float = Field(gt=0, le=100000)
+    due_date: str  # ISO date or "never"
 
 
 class LookupOut(BaseModel):
@@ -174,6 +183,10 @@ class ItemOut(BaseModel):
     price_source: Literal["manual", "receipt"] | None
     unit_price: float | None
 
+    # Parts of the quantity with their own due dates. What they leave over
+    # (`rest_amount`) is due on `due_date`, which is the product's default unless set.
+    lots: list[Lot]
+    rest_amount: float
     due_date: str  # ISO date or "never"
     due_source: Literal["manual", "default"]
     location_id: int | None
@@ -185,6 +198,9 @@ class ItemOut(BaseModel):
     match_score: float | None
     match_method: Literal["upc", "learned", "fuzzy", "ai", "manual"] | None
 
+    # How much of the product Grocy has in stock right now (in `stock_unit`), for
+    # products that already exist; null when unknown.
+    in_stock: float | None
     warnings: list[str]
     error: str | None  # set when state == "failed"
     committed_amount: float | None
@@ -209,10 +225,24 @@ class ItemPatch(BaseModel):
     quantity: float | None = Field(default=None, gt=0)
     line_total: float | None = Field(default=None, ge=0)
     due_date: str | None = None  # ISO date or "never"
+    # Replaces the item's lots; [] or null removes them. If they add up to more than the
+    # quantity, the quantity goes up to match.
+    lots: list[Lot] | None = Field(default=None, max_length=100)
     location_id: int | None = None
     shopping_location_id: int | None = None
     note: str | None = None
     receipt_line_id: int | None = None  # manual match; null unmatches
+    skipped: bool | None = None
+
+
+class BulkItemPatch(BaseModel):
+    """The same change to several items at once (the bulk-edit table). Fields work as
+    in ItemPatch: present-but-null goes back to the derived value."""
+
+    item_ids: list[int] = Field(min_length=1, max_length=500)
+    due_date: str | None = None
+    location_id: int | None = None
+    shopping_location_id: int | None = None
     skipped: bool | None = None
 
 
@@ -295,6 +325,7 @@ class LineItemCreate(BaseModel):
 
 class TripCreate(BaseModel):
     name: str = Field(default="", max_length=120)
+    kind: TripKind = "shopping"
 
 
 class TripPatch(BaseModel):
@@ -304,11 +335,13 @@ class TripPatch(BaseModel):
 class TripSummary(BaseModel):
     id: int
     name: str
+    kind: TripKind
     status: Literal["open", "submitted"]
     created_at: datetime
     submitted_at: datetime | None
     created_by: str
     item_count: int
+    committed_count: int  # items already booked into Grocy
     receipt_count: int
     stores: list[str]
     total: float | None  # sum of receipt totals when known

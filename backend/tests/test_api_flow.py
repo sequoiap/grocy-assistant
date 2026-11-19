@@ -351,7 +351,8 @@ def test_revision_column_is_added_to_an_older_database(tmp_path, monkeypatch):
     db.init_db()
     db.init_db()  # idempotent
     check = sqlite3.connect(tmp_path / "grocy-assistant.db")
-    assert check.execute("SELECT revision FROM trips WHERE id = 1").fetchone() == (0,)
+    row = check.execute("SELECT revision, kind FROM trips WHERE id = 1").fetchone()
+    assert row == (0, "shopping")  # trips from before inventory mode were all shopping
     check.close()
     db.reset_engine()
     config.get_config.cache_clear()
