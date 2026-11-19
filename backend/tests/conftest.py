@@ -47,6 +47,11 @@ class FakeGrocy:
         self.fail_undo: set[str] = set()  # transaction ids whose undo answers 400
         self.stock: dict[int, float] = {}  # stock there before any booking: product -> amount
         self.fail_create: set[str] = set()  # object tables whose POST answers 400
+        self.stock_actions: list[dict] = []  # consume and open calls, in order
+        self.forbid_stock_changes = False  # consume and open answer 403
+        # product -> its packages: {"stock_id", "amount", "open", "best_before_date"}.
+        # Only for tests about one package; the amounts in `stock` still count in all.
+        self.entries: dict[int, list[dict]] = {}
 
         self.users: dict[int, dict] = {}
         self.api_keys: list[dict] = []
@@ -131,6 +136,29 @@ class FakeGrocy:
                 }
             )
         return pid
+
+    def _product(self, pid: int) -> dict | None:
+        return next((p for p in self.tables["products"] if p["id"] == pid), None)
+
+    def _live(self, rows: list[dict]) -> list[dict]:
+        return [r for r in rows if r["transaction_id"] not in self.undone]
+
+    def _amounts(self) -> dict[int, float]:
+        amounts: dict[int, float] = dict(self.stock)
+        for b in self._live(self.bookings):
+            amounts[b["product_id"]] = amounts.get(b["product_id"], 0) + b["amount"]
+        for a in self._live(self.stock_actions):
+            if a["action"] == "consume":
+                amounts[a["product_id"]] = amounts.get(a["product_id"], 0) - a["amount"]
+        return amounts
+
+    def _opened(self, pid: int) -> float:
+        opened = sum(
+            a["amount"]
+            for a in self._live(self.stock_actions)
+            if a["product_id"] == pid and a["action"] == "open"
+        )
+        return min(opened, max(self._amounts().get(pid, 0), 0))
 
     # --- the server -------------------------------------------------------------
 
@@ -290,12 +318,72 @@ class FakeGrocy:
             self.undone.append(m[1])
             return httpx.Response(204)
         if path == "/stock":
-            amounts: dict[int, float] = dict(self.stock)
-            for b in self.bookings:
-                if b["transaction_id"] not in self.undone:
-                    amounts[b["product_id"]] = amounts.get(b["product_id"], 0) + b["amount"]
-            rows = [{"product_id": pid, "amount": a} for pid, a in amounts.items() if a > 0]
+            rows = [
+                {
+                    "product_id": pid,
+                    "amount": a,
+                    "amount_aggregated": a,
+                    "amount_opened": self._opened(pid),
+                    "amount_opened_aggregated": self._opened(pid),
+                    "is_aggregated_amount": 0,
+                    "best_before_date": "2999-12-31",
+                    "product": self._product(pid),
+                }
+                for pid, a in self._amounts().items()
+                if a > 0
+            ]
             return httpx.Response(200, json=rows)
+        if m := re.fullmatch(r"/stock/products/(\d+)", path):
+            pid = int(m[1])
+            product = self._product(pid)
+            if product is None:
+                return httpx.Response(400, json={"error_message": "Product does not exist"})
+            amount = self._amounts().get(pid, 0)
+            return httpx.Response(
+                200,
+                json={
+                    "product": product,
+                    "stock_amount": amount,
+                    "stock_amount_opened": self._opened(pid),
+                    "stock_amount_aggregated": amount,
+                    "stock_amount_opened_aggregated": self._opened(pid),
+                    "is_aggregated_amount": 0,
+                    "next_due_date": "2026-12-01" if amount > 0 else None,
+                },
+            )
+        if m := re.fullmatch(r"/stock/products/(\d+)/entries", path):
+            rows = [e for e in self.entries.get(int(m[1]), []) if e["amount"] > 0]
+            return httpx.Response(200, json=rows)
+        if m := re.fullmatch(r"/stock/products/(\d+)/(consume|open)", path):
+            pid, action = int(m[1]), m[2]
+            if action == "open" and (self._product(pid) or {}).get("disable_open"):
+                return httpx.Response(400, json={"error_message": "Product can't be opened"})
+            if self.forbid_stock_changes:
+                return httpx.Response(403, json={"error_message": "Permission denied"})
+            body = json.loads(request.content)
+            amount = self._amounts().get(pid, 0)
+            limit = amount if action == "consume" else amount - self._opened(pid)
+            package = [
+                e for e in self.entries.get(pid, []) if e["stock_id"] == body.get("stock_entry_id")
+            ]
+            if body["amount"] > limit:
+                verb = "consumed" if action == "consume" else "opened"
+                error = f"Amount to be {verb} cannot be > current stock amount"
+                return httpx.Response(400, json={"error_message": error})
+            # Like Grocy 4.7: the amount was checked against the whole product above, and
+            # with a package named, only that package is used, however much was asked for.
+            left = body["amount"]
+            for e in package:
+                if action == "consume":
+                    used = min(left, e["amount"])
+                    e["amount"], left = e["amount"] - used, left - used
+                elif not e["open"]:
+                    e["open"], left = 1, left - e["amount"]
+            tid = f"{action}{len(self.stock_actions) + 1}"
+            self.stock_actions.append(
+                {"product_id": pid, "action": action, "transaction_id": tid, **body}
+            )
+            return httpx.Response(200, json=[{"id": 1, "transaction_id": tid}])
         return httpx.Response(404, json={"error_message": f"no route {path}"})
 
 

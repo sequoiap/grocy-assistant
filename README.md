@@ -50,7 +50,7 @@ phone as its scanner:
   their receipts. Without a provider everything still works.
 - **Phone as the scanner for your computer.** Open a trip on the computer, choose
   *Use phone as scanner*, and scan the QR code it shows with your phone (the phone's
-  camera app, or *Join a trip* inside the installed app). Both devices then show the
+  camera app, or *Other devices* → *Join a trip* inside the installed app). Both devices then show the
   same trip live: barcodes and receipt photos taken on the phone appear on the
   computer within a couple of seconds, where reviewing is more comfortable. Trips are
   shared by the household, so two people can also work on one trip at once.
@@ -64,6 +64,16 @@ phone as its scanner:
   product's usual shelf life, as Grocy would give it. Stock is booked as an
   inventory correction, not a purchase. Counted amounts are added to what Grocy
   already has, and the app warns when Grocy already holds some of a product.
+- **Consuming and opening** what's already at home, without Grocy's web
+  interface: choose *Consume or open* on the home screen (or long-press the installed
+  app's icon), then scan the barcode or a Grocy label, or search what's in stock
+  by name for things whose packaging is long gone. Pick how much, then *Consume*
+  or *Open*. Ticking "it went bad" logs it as spoiled instead. Scanning the same
+  barcode again while it's open counts one more. It is booked in Grocy straight
+  away, the soonest-due stock first. A Grocy label printed for one package uses
+  just that package, and shows how much is left in it. The last few actions can
+  be undone from the same screen. Products weighed
+  in their container (Grocy's tare weight handling) are left to Grocy itself.
 - **The camera can be switched off** on the scan screen while you walk to the
   next cupboard. It stays off until you turn it back on.
 - **On a big screen** the review step can show everything as one editable table:
@@ -222,6 +232,9 @@ Open the HTTPS address and sign in with your **Grocy** username and password
 (see [Accounts](#accounts)). On a phone, open the same address in the browser and
 choose *Add to Home Screen* (iOS: the Share menu in Safari; Android: the browser
 menu) to install it as an app. Allow camera access when it asks.
+Signed in on a computer already? *Other devices* (the QR icon on its home screen)
+→ *Get the app* shows a QR code of the address, so you don't have to type it on
+the phone.
 
 ### Updating and other housekeeping
 
@@ -278,7 +291,7 @@ by row, which is the quickest way to see why one misparsed. API docs are at
 
 ```
 backend/app/
-  routers/      HTTP API (auth, settings, trips, Grocy metadata)
+  routers/      HTTP API (auth, settings, trips, Grocy metadata, consuming stock)
   services/     matching, trip resolution, receipt processing, submit/undo
   receipts/     OCR, row reconstruction, store parsers, confidence scoring
   ai/           optional providers (Anthropic, OpenAI-compatible)

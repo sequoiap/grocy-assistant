@@ -427,6 +427,46 @@ class GrocyClient:
     async def undo_transaction(self, transaction_id: str) -> None:
         await self._request("POST", f"/stock/transactions/{transaction_id}/undo")
 
+    async def current_stock(self) -> list[dict]:
+        """Every product with stock, as Grocy has it this moment (not the snapshot)."""
+        return await self._request("GET", "/stock") or []
+
+    async def product_stock_entries(self, product_id: int) -> list[dict]:
+        """The product's stock entries (its packages), each with its `stock_id`."""
+        return await self._request("GET", f"/stock/products/{product_id}/entries") or []
+
+    async def product_details(self, product_id: int) -> dict:
+        return await self._request("GET", f"/stock/products/{product_id}") or {}
+
+    async def consume_stock(
+        self,
+        product_id: int,
+        *,
+        amount: float,
+        spoiled: bool = False,
+        stock_entry_id: str | None = None,
+    ) -> list[dict]:
+        """Takes `amount` (stock unit) out of stock, due-soonest first unless one stock
+        entry is named. A parent product may be consumed from its sub-products."""
+        body: dict[str, Any] = {
+            "amount": amount,
+            "transaction_type": "consume",
+            "spoiled": spoiled,
+            "allow_subproduct_substitution": True,
+        }
+        if stock_entry_id:
+            body["stock_entry_id"] = stock_entry_id
+        return await self._request("POST", f"/stock/products/{product_id}/consume", json=body) or []
+
+    async def open_stock(
+        self, product_id: int, *, amount: float, stock_entry_id: str | None = None
+    ) -> list[dict]:
+        """Marks `amount` (stock unit) as opened, which can shorten its due date."""
+        body: dict[str, Any] = {"amount": amount, "allow_subproduct_substitution": True}
+        if stock_entry_id:
+            body["stock_entry_id"] = stock_entry_id
+        return await self._request("POST", f"/stock/products/{product_id}/open", json=body) or []
+
     # --- master data snapshot -------------------------------------------
 
     async def find_barcode_live(self, barcode: str) -> dict | None:

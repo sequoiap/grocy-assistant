@@ -369,3 +369,55 @@ class SubmitResult(BaseModel):
     failed: int
     remaining: int  # items still pending (need a product) after this submit
     trip: TripOut
+
+
+# --- consuming and opening stock ----------------------------------------------
+
+
+class StockProduct(BaseModel):
+    """A product as it stands in Grocy right now, for consuming or opening some of it.
+    Amounts are in the product's stock unit."""
+
+    id: int
+    name: str
+    amount: float  # in stock (with sub-products, for a parent product)
+    amount_opened: float
+    unit: str  # stock unit, singular ("Piece")
+    unit_plural: str  # "Pieces"
+    next_due_date: str | None  # ISO date, "never", or null when nothing is in stock
+    location: str | None  # the product's default location
+    # What one tap consumes or opens by default (Grocy's "quick consume/open amount").
+    quick_consume_amount: float
+    quick_open_amount: float
+    # The scanned barcode stands for this much (a pack of 6, say); null otherwise.
+    pack_amount: float | None = None
+    # A Grocycode label of one particular stock entry: only that entry is used, and
+    # amount, amount_opened and next_due_date are that package's own.
+    stock_entry_id: str | None = None
+    # With such a label: how much of the product there is in all, packages together.
+    product_amount: float | None = None
+    # Products whose containers are weighed (tare handling) are left to Grocy.
+    tare_weight_handling: bool = False
+    # False when the product is set in Grocy to never be opened ("disable open").
+    can_open: bool = True
+
+
+class StockScanIn(BaseModel):
+    barcode: str = Field(min_length=1, max_length=128)
+
+
+class StockActionIn(BaseModel):
+    amount: float = Field(gt=0, le=100000)
+    stock_entry_id: str | None = Field(default=None, max_length=64)
+    spoiled: bool = False  # consume only: it was thrown out, not eaten
+
+
+class StockActionOut(BaseModel):
+    # Grocy's transaction, for undoing this action.
+    transaction_id: str | None
+    product: StockProduct  # the product after the action
+
+
+class StockUndoIn(BaseModel):
+    # Grocy's ids are uniqid() hex; anything else would be steering the URL it goes into.
+    transaction_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9]+$")

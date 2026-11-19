@@ -11,6 +11,7 @@
   import Home from './routes/Home.svelte';
   import Settings from './routes/Settings.svelte';
   import TripPage from './trip/TripPage.svelte';
+  import ConsumePage from './consume/ConsumePage.svelte';
   import BootError from './routes/BootError.svelte';
   import ProxySignIn from './routes/ProxySignIn.svelte';
   import NotFound from './routes/NotFound.svelte';
@@ -67,6 +68,8 @@
     <Home />
   {:else if route.name === 'settings'}
     <Settings />
+  {:else if route.name === 'consume'}
+    <ConsumePage />
   {:else if route.name === 'trip'}
     {#key route.id}
       <TripPage id={route.id} step={route.step} />

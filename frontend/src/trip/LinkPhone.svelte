@@ -5,7 +5,7 @@
   import { renderSVG } from 'uqr';
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
-  import { tripLink } from '../lib/triplink';
+  import { phoneLinkProblem, tripLink } from '../lib/triplink';
   import { toasts } from '../lib/ui.svelte';
 
   let { open = $bindable(false), tripId }: { open?: boolean; tripId: number } = $props();
@@ -13,11 +13,7 @@
   const link = $derived(tripLink(tripId));
   // Generated locally from our own URL, so it is safe to inline.
   const svg = $derived(renderSVG(link, { ecc: 'M', border: 2 }));
-  // "localhost" means this computer only: a phone following the link would look
-  // for the app on itself.
-  const localOnly = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-  // Phones refuse camera access on plain http, so the link would open but not scan.
-  const insecure = location.protocol !== 'https:';
+  const problem = phoneLinkProblem();
 
   async function copy() {
     try {
@@ -35,11 +31,11 @@
       {@html svg}
     </div>
     <ol>
-      <li>Point your phone's camera at the code and open the link. In the installed app, use <strong>Join a trip</strong> on the home screen instead.</li>
+      <li>Point your phone's camera at the code and open the link. In the installed app, use <strong>Other devices</strong> → <strong>Join a trip</strong> on its home screen instead.</li>
       <li>Sign in on the phone if it asks. That's only needed once per phone.</li>
       <li>Scan barcodes and photograph receipts on the phone. They show up on this screen as you go.</li>
     </ol>
-    {#if localOnly}
+    {#if problem === 'local'}
       <div class="note warn">
         <Icon name="alert" size={18} />
         <p>
@@ -47,7 +43,7 @@
           it here by the https address your phone uses, then show this code again.
         </p>
       </div>
-    {:else if insecure}
+    {:else if problem === 'insecure'}
       <div class="note warn">
         <Icon name="alert" size={18} />
         <p>This page isn't on HTTPS, and phones only allow the camera on HTTPS. Open Grocy Assistant through its https address first, then show this code again.</p>
