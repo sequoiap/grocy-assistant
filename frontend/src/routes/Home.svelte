@@ -8,12 +8,12 @@
   import Icon from '../components/Icon.svelte';
   import Mark from '../components/Mark.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import JoinTrip from '../components/JoinTrip.svelte';
+  import OtherDevices from '../components/devices/OtherDevices.svelte';
 
   let trips = $state<TripSummary[] | null>(null);
   let error = $state<string | null>(null);
   let starting = $state<TripKind | null>(null);
-  let joinOpen = $state(false);
+  let devicesOpen = $state(false);
 
   const open = $derived((trips ?? []).filter((t) => t.status === 'open'));
   const done = $derived((trips ?? []).filter((t) => t.status === 'submitted'));
@@ -56,7 +56,7 @@
     <div class="brand"><Mark size={30} /> <span>Grocy Assistant</span></div>
   {/snippet}
   {#snippet end()}
-    <button type="button" class="btn ghost icon" aria-label="Join a trip open on another screen" title="Join a trip" onclick={() => (joinOpen = true)}>
+    <button type="button" class="btn ghost icon" aria-label="Other devices" title="Other devices: open the app there, or join a trip" onclick={() => (devicesOpen = true)}>
       <Icon name="qr" />
     </button>
     <a class="btn ghost icon" href="/settings" aria-label="Settings"><Icon name="gear" /></a>
@@ -64,34 +64,34 @@
 </TopBar>
 
 <main class="page home">
-  <section class="open" aria-labelledby="open-h">
-    <div class="section-head">
-      <h1 id="open-h">{open.length ? 'In progress' : 'Back from the shops?'}</h1>
-      <div class="starts wide-only">
-        <button type="button" class="btn" onclick={() => start('inventory')} disabled={starting !== null}>
-          <Icon name="box" /> Take inventory
-        </button>
-        <button type="button" class="btn primary" onclick={() => start()} disabled={starting !== null}>
-          <Icon name="plus" /> Start a shopping trip
-        </button>
-      </div>
+  <section aria-labelledby="start-h">
+    <h1 id="start-h" class="sr-only">Start something</h1>
+    <div class="cards">
+      <button type="button" class="card primary wide" onclick={() => start()} disabled={starting !== null}>
+        <span class="c-icon">{#if starting === 'shopping'}<span class="spinner"></span>{:else}<Icon name="plus" size={26} />{/if}</span>
+        <span class="c-title">Start a shopping trip</span>
+        <span class="c-desc">Scan what you bought, snap the receipt, add it all to Grocy at once.</span>
+      </button>
+      <button type="button" class="card" onclick={() => start('inventory')} disabled={starting !== null}>
+        <span class="c-icon">{#if starting === 'inventory'}<span class="spinner"></span>{:else}<Icon name="box" />{/if}</span>
+        <span class="c-title">Take inventory</span>
+        <span class="c-desc">Count what's already at home. No receipt needed.</span>
+      </button>
+      <a class="card" href="/consume">
+        <span class="c-icon"><Icon name="bowl" /></span>
+        <span class="c-title">Consume or open</span>
+        <span class="c-desc">Used something up or opened it? Scan it or find it by name.</span>
+      </a>
     </div>
+  </section>
 
-    {#if trips === null && !error}
-      <div class="placeholder" aria-busy="true"></div>
-    {:else if error}
-      <div class="note bad"><Icon name="alert" size={18} /><p>{error} <button class="linklike" onclick={load}>Try again</button></p></div>
-    {:else if open.length === 0}
-      <ol class="how">
-        <li><Icon name="barcode" /> <span><strong>Scan</strong> each thing you bought, once.</span></li>
-        <li><Icon name="receipt" /> <span><strong>Photograph</strong> the receipt, or several if you went to more than one shop.</span></li>
-        <li><Icon name="check" /> <span><strong>Check</strong> the list and add it all to Grocy with one tap.</span></li>
-      </ol>
-      <p class="inv-hint small muted">
-        Setting up Grocy for the first time? <strong>Take inventory</strong> instead: scan what's already in the
-        cupboards, with no receipt or prices needed.
-      </p>
-    {:else}
+  {#if trips === null && !error}
+    <div class="placeholder" aria-busy="true"></div>
+  {:else if error}
+    <div class="note bad"><Icon name="alert" size={18} /><p>{error} <button class="linklike" onclick={load}>Try again</button></p></div>
+  {:else if open.length}
+    <section class="open" aria-labelledby="open-h">
+      <h2 id="open-h">In progress</h2>
       <ul class="open-list">
         {#each open as t (t.id)}
           <li>
@@ -106,12 +106,12 @@
           </li>
         {/each}
       </ul>
-    {/if}
-  </section>
+    </section>
+  {/if}
 
   <p class="join">
-    <button type="button" class="btn ghost small" onclick={() => (joinOpen = true)}>
-      <Icon name="qr" size={20} /> Join a trip that's open on another screen
+    <button type="button" class="btn ghost small" onclick={() => (devicesOpen = true)}>
+      <Icon name="qr" size={20} /> Open the app on another device, or join a trip from one
     </button>
   </p>
 
@@ -136,32 +136,11 @@
   {/if}
 </main>
 
-<JoinTrip bind:open={joinOpen} />
-
-<div class="dock narrow-only">
-  <button type="button" class="btn primary big block" onclick={() => start()} disabled={starting !== null}>
-    {#if starting === 'shopping'}<span class="spinner"></span>{:else}<Icon name="plus" size={26} />{/if}
-    Start a shopping trip
-  </button>
-  <button type="button" class="btn block" onclick={() => start('inventory')} disabled={starting !== null}>
-    {#if starting === 'inventory'}<span class="spinner"></span>{:else}<Icon name="box" />{/if}
-    Take inventory
-  </button>
-</div>
+<OtherDevices bind:open={devicesOpen} />
 
 <style>
   .join {
-    margin: 4px 0 0;
-  }
-  .starts {
-    gap: 10px;
-  }
-  .inv-hint {
-    margin-top: 12px;
-    max-width: 60ch;
-  }
-  .open-trip.inventory {
-    border-left-color: var(--basil);
+    margin: -12px 0 0;
   }
   .brand {
     display: flex;
@@ -171,46 +150,107 @@
     font-size: 1.125rem;
   }
   .home {
-    padding-bottom: calc(var(--safe-b) + 180px);
     display: grid;
-    gap: 36px;
-    padding-top: 24px;
+    gap: 32px;
+    padding-top: 20px;
   }
-  .section-head {
-    display: flex;
+  /* What can be started from here. One card per feature; more just flow on. */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .card {
+    appearance: none;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'icon'
+      'title'
+      'desc';
+    justify-items: start;
+    align-content: start;
+    gap: 8px 12px;
+    padding: 16px;
+    border: 2px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition:
+      border-color 120ms ease,
+      transform 80ms ease;
+  }
+  .card:hover:not(:disabled) {
+    border-color: var(--cobalt);
+  }
+  .card:active:not(:disabled) {
+    transform: translateY(2px);
+  }
+  .card:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  /* Full width on phones, with room for the icon beside the title. */
+  .card.wide {
+    grid-column: 1 / -1;
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'icon title'
+      'desc desc';
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 18px;
+  }
+  .c-icon {
+    grid-area: icon;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    background: var(--cobalt-soft);
+    color: var(--cobalt);
+  }
+  .c-title {
+    grid-area: title;
+    font-size: var(--fs-lg);
+    font-weight: 760;
+    line-height: 1.2;
+    overflow-wrap: normal;
+  }
+  .c-desc {
+    grid-area: desc;
+    font-size: var(--fs-sm);
+    color: var(--ink-2);
+  }
+  .card.primary {
+    background: var(--cobalt);
+    border-color: var(--cobalt);
+    color: var(--on-cobalt);
+    box-shadow: var(--lip);
+  }
+  .card.primary:hover:not(:disabled) {
+    background: var(--cobalt-deep);
+    border-color: var(--cobalt-deep);
+  }
+  .card.primary .c-icon {
+    background: color-mix(in srgb, var(--on-cobalt) 18%, transparent);
+    color: var(--on-cobalt);
+  }
+  .card.primary .c-desc {
+    color: color-mix(in srgb, var(--on-cobalt) 85%, transparent);
+  }
+  .open h2,
+  .history h2 {
+    margin-bottom: 12px;
   }
   .placeholder {
     height: 120px;
     border-radius: var(--r-lg);
     background: var(--surface-2);
-  }
-  .how {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 2px;
-    border-radius: var(--r-lg);
-    overflow: hidden;
-  }
-  .how li {
-    display: flex;
-    gap: 14px;
-    align-items: flex-start;
-    padding: 16px 18px;
-    background: var(--surface);
-    color: var(--ink-2);
-  }
-  .how li :global(svg) {
-    color: var(--cobalt);
-    margin-top: 1px;
-  }
-  .how strong {
-    color: var(--ink);
   }
   .open-list {
     list-style: none;
@@ -231,6 +271,9 @@
     color: var(--ink);
     text-decoration: none;
   }
+  .open-trip.inventory {
+    border-left-color: var(--basil);
+  }
   .open-trip:hover {
     border-color: var(--cobalt);
   }
@@ -245,9 +288,6 @@
     top: 50%;
     transform: translateY(-50%);
     color: var(--cobalt);
-  }
-  .history h2 {
-    margin-bottom: 10px;
   }
   .history ul {
     list-style: none;
@@ -282,28 +322,25 @@
   .h-total {
     font-weight: 700;
   }
-  .dock {
-    display: grid;
-    gap: 8px;
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    padding: 12px var(--gutter) calc(var(--safe-b) + 14px);
-    background: linear-gradient(transparent, var(--paper) 30%);
-  }
-  .wide-only {
-    display: none;
-  }
   @media (min-width: 720px) {
-    .wide-only {
-      display: inline-flex;
-    }
-    .narrow-only {
-      display: none;
-    }
     .home {
+      padding-top: 28px;
       padding-bottom: 48px;
+    }
+    .cards {
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+    .card.wide {
+      grid-column: auto;
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        'icon'
+        'title'
+        'desc';
+      align-items: start;
+    }
+    .card {
+      padding: 20px;
     }
   }
 </style>

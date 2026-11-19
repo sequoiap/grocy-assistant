@@ -50,7 +50,7 @@ phone as its scanner:
   their receipts. Without a provider everything still works.
 - **Phone as the scanner for your computer.** Open a trip on the computer, choose
   *Use phone as scanner*, and scan the QR code it shows with your phone (the phone's
-  camera app, or *Join a trip* inside the installed app). Both devices then show the
+  camera app, or *Other devices* → *Join a trip* inside the installed app). Both devices then show the
   same trip live: barcodes and receipt photos taken on the phone appear on the
   computer within a couple of seconds, where reviewing is more comfortable. Trips are
   shared by the household, so two people can also work on one trip at once.
@@ -231,6 +231,9 @@ Open the HTTPS address and sign in with your **Grocy** username and password
 (see [Accounts](#accounts)). On a phone, open the same address in the browser and
 choose *Add to Home Screen* (iOS: the Share menu in Safari; Android: the browser
 menu) to install it as an app. Allow camera access when it asks.
+Signed in on a computer already? *Other devices* (the QR icon on its home screen)
+→ *Get the app* shows a QR code of the address, so you don't have to type it on
+the phone.
 
 ### Updating and other housekeeping
 
