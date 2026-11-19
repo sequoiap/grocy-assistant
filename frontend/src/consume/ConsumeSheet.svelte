@@ -37,7 +37,10 @@
   const problem = $derived.by((): string | null => {
     if (!product || blocked) return null;
     if (!(amount > 0)) return 'Enter how much.';
-    if (amount > product.amount) return `There's only ${amountText(product, product.amount)} in stock.`;
+    if (amount > product.amount)
+      return product.stock_entry_id
+        ? `This package holds only ${amountText(product, product.amount)}.`
+        : `There's only ${amountText(product, product.amount)} in stock.`;
     return null;
   });
   const canOpen = $derived(!blocked && !problem && !spoiled && amount <= unopened);
@@ -102,7 +105,14 @@
       {#if product.amount <= 0}
         <p class="note warn">
           <Icon name="info" size={18} />
-          <span>Grocy has none of this in stock, so there's nothing to consume or open.</span>
+          <span>
+            {#if product.stock_entry_id}
+              Grocy has nothing left of this package, so there's nothing to consume or open. If it's here after all, use
+              <strong>Search</strong> to find the product instead.
+            {:else}
+              Grocy has none of this in stock, so there's nothing to consume or open.
+            {/if}
+          </span>
         </p>
       {:else if product.tare_weight_handling}
         <p class="note warn">
@@ -147,17 +157,19 @@
           <span>It went bad: throw it out <span class="muted">(logged as spoiled)</span></span>
         </label>
 
-        <div class="actions">
-          <button
-            type="button"
-            class="btn big"
-            disabled={!canOpen || busy !== null}
-            onclick={() => act('open')}
-            title={unopened <= 0 ? 'All of it is open already' : undefined}
-          >
-            {#if busy === 'open'}<span class="spinner"></span>{/if}
-            Open {problem ? '' : amountText(product, amount)}
-          </button>
+        <div class="actions" class:single={!product.can_open}>
+          {#if product.can_open}
+            <button
+              type="button"
+              class="btn big"
+              disabled={!canOpen || busy !== null}
+              onclick={() => act('open')}
+              title={unopened <= 0 ? 'All of it is open already' : undefined}
+            >
+              {#if busy === 'open'}<span class="spinner"></span>{/if}
+              Open {problem ? '' : amountText(product, amount)}
+            </button>
+          {/if}
           <button
             type="button"
             class="btn big"
@@ -170,8 +182,8 @@
             {spoiled ? 'Throw out' : 'Consume'} {problem ? '' : amountText(product, amount)}
           </button>
         </div>
-        {#if unopened <= 0}
-          <p class="small muted">All of it is open already.</p>
+        {#if unopened <= 0 && product.can_open}
+          <p class="small muted">{product.stock_entry_id ? 'This package is open already.' : 'All of it is open already.'}</p>
         {/if}
       {/if}
     </div>
@@ -234,7 +246,9 @@
     opacity: 0.45;
     cursor: default;
   }
-  .stepper input {
+  /* More specific than app.css's full-width input rule, so it never depends on stylesheet order. */
+  .amount .stepper input {
+    flex: none;
     width: 5.5ch;
     min-height: 48px;
     padding: 4px;
@@ -276,6 +290,9 @@
     display: grid;
     grid-template-columns: 1fr 1.4fr;
     gap: 10px;
+  }
+  .actions.single {
+    grid-template-columns: 1fr;
   }
   .actions .btn {
     padding-inline: 0.8rem;

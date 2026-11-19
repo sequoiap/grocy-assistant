@@ -391,10 +391,15 @@ class StockProduct(BaseModel):
     quick_open_amount: float
     # The scanned barcode stands for this much (a pack of 6, say); null otherwise.
     pack_amount: float | None = None
-    # A Grocycode label of one particular stock entry: only that entry is used.
+    # A Grocycode label of one particular stock entry: only that entry is used, and
+    # amount, amount_opened and next_due_date are that package's own.
     stock_entry_id: str | None = None
+    # With such a label: how much of the product there is in all, packages together.
+    product_amount: float | None = None
     # Products whose containers are weighed (tare handling) are left to Grocy.
     tare_weight_handling: bool = False
+    # False when the product is set in Grocy to never be opened ("disable open").
+    can_open: bool = True
 
 
 class StockScanIn(BaseModel):

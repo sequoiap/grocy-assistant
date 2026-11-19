@@ -94,6 +94,7 @@ def _stock_product(
         quick_consume_amount=quick,
         quick_open_amount=_num(product.get("quick_open_amount"), quick) or quick,
         tare_weight_handling=bool(int(product.get("enable_tare_weight_handling") or 0)),
+        can_open=not int(product.get("disable_open") or 0),
     )
 
 
@@ -179,15 +180,62 @@ async def scan(body: StockScanIn, grocy: GrocyClient = Depends(get_grocy)):
     product = await _product_now(grocy, md, product_id)
     if pack is not None and pack != product.quick_consume_amount:
         product.pack_amount = pack
-    product.stock_entry_id = entry_id
+    if entry_id:
+        await _just_the_package(grocy, product, entry_id)
     return product
 
 
-def _check(product: StockProduct) -> None:
+async def _just_the_package(grocy: GrocyClient, product: StockProduct, entry_id: str) -> None:
+    """Narrows `product` to the one package a Grocy label names. Opening part of a
+    package splits it into rows that keep its stock_id, so those are added up.
+    Nothing left of it (all used up) leaves an amount of 0."""
+    rows = [
+        r
+        for r in await _call(grocy.product_stock_entries(product.id))
+        if str(r.get("stock_id")) == entry_id
+    ]
+    product.product_amount = product.amount
+    product.stock_entry_id = entry_id
+    product.amount = round(sum(_num(r.get("amount")) for r in rows), 4)
+    product.amount_opened = round(
+        sum(_num(r.get("amount")) for r in rows if int(r.get("open") or 0)), 4
+    )
+    dates = sorted(str(r["best_before_date"]) for r in rows if r.get("best_before_date"))
+    product.next_due_date = _due(dates[0]) if dates and product.amount > 0 else None
+
+
+async def _checked(
+    grocy: GrocyClient, md: MasterData, product_id: int, body: StockActionIn, action: str
+) -> None:
+    """Refuses what Grocy would refuse anyway, and what it would get wrong: for one
+    package, Grocy checks the amount against the whole product's stock and then quietly
+    books only what that package holds."""
+    product = await _product_now(grocy, md, product_id)
     if product.tare_weight_handling:
         raise ApiError(
             409, f"{product.name} is weighed in its container. Consume it in Grocy itself."
         )
+    if action == "open" and not product.can_open:
+        raise ApiError(409, f"{product.name} is set in Grocy to never be opened.")
+    if not body.stock_entry_id:
+        return
+    await _just_the_package(grocy, product, body.stock_entry_id)
+    if action == "consume" and body.amount > product.amount:
+        held = _amount_text(product, product.amount)
+        raise ApiError(
+            409, f"This package holds only {held}." if held else "This package is used up."
+        )
+    unopened = round(product.amount - product.amount_opened, 4)
+    if action == "open" and body.amount > unopened:
+        raise ApiError(409, f"Only {_amount_text(product, unopened)} of this package is unopened.")
+
+
+def _amount_text(product: StockProduct, n: float) -> str:
+    """'1 Piece', '2 Pieces'; '' for nothing at all."""
+    if n <= 0:
+        return ""
+    unit = product.unit if n == 1 else product.unit_plural or product.unit
+    return f"{n:g} {unit}".strip()
 
 
 def _transaction(rows) -> str | None:
@@ -200,7 +248,7 @@ def _transaction(rows) -> str | None:
 @router.post("/products/{product_id}/consume", response_model=StockActionOut)
 async def consume(product_id: int, body: StockActionIn, grocy: GrocyClient = Depends(get_grocy)):
     md = await _md(grocy)
-    _check(await _product_now(grocy, md, product_id))
+    await _checked(grocy, md, product_id, body, "consume")
     rows = await _call(
         grocy.consume_stock(
             product_id, amount=body.amount, spoiled=body.spoiled, stock_entry_id=body.stock_entry_id
@@ -214,7 +262,7 @@ async def consume(product_id: int, body: StockActionIn, grocy: GrocyClient = Dep
 @router.post("/products/{product_id}/open", response_model=StockActionOut)
 async def open_stock(product_id: int, body: StockActionIn, grocy: GrocyClient = Depends(get_grocy)):
     md = await _md(grocy)
-    _check(await _product_now(grocy, md, product_id))
+    await _checked(grocy, md, product_id, body, "open")
     rows = await _call(
         grocy.open_stock(product_id, amount=body.amount, stock_entry_id=body.stock_entry_id)
     )

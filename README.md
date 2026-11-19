@@ -70,8 +70,9 @@ phone as its scanner:
   by name for things whose packaging is long gone. Pick how much, then *Consume*
   or *Open*. Ticking "it went bad" logs it as spoiled instead. Scanning the same
   barcode again while it's open counts one more. It is booked in Grocy straight
-  away, the soonest-due stock first (or exactly the package a Grocy label names),
-  and the last few actions can be undone from the same screen. Products weighed
+  away, the soonest-due stock first. A Grocy label printed for one package uses
+  just that package, and shows how much is left in it. The last few actions can
+  be undone from the same screen. Products weighed
   in their container (Grocy's tare weight handling) are left to Grocy itself.
 - **The camera can be switched off** on the scan screen while you walk to the
   next cupboard. It stays off until you turn it back on.

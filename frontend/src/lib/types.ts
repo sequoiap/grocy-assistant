@@ -339,10 +339,17 @@ export interface StockProduct {
   quick_open_amount: number;
   /** The scanned barcode stands for this much (a pack of 6, say). */
   pack_amount: number | null;
-  /** Scanned from a Grocycode label of one stock entry: only that entry is used. */
+  /**
+   * Scanned from a Grocycode label of one stock entry: only that entry is used, and
+   * amount, amount_opened and next_due_date are that package's own.
+   */
   stock_entry_id: string | null;
+  /** With such a label: how much of the product there is in all, packages together. */
+  product_amount?: number | null;
   /** Weighed in its container; consuming it is left to Grocy itself. */
   tare_weight_handling: boolean;
+  /** False when the product is set in Grocy to never be opened. */
+  can_open: boolean;
 }
 
 export interface StockActionIn {

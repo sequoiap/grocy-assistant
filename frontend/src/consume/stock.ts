@@ -12,10 +12,20 @@ export function amountText(p: Pick<StockProduct, 'unit' | 'unit_plural'>, n: num
 
 /** "3 Pieces, 1 opened": what's there, as one phrase. */
 export function stockText(p: StockProduct): string {
+  if (p.stock_entry_id) return packageText(p);
   if (p.amount <= 0) return 'None in stock';
   const parts = [`${amountText(p, p.amount)} in stock`];
   if (p.amount_opened > 0) parts.push(`${qty(p.amount_opened)} opened`);
   return parts.join(', ');
+}
+
+/** "This package: 2 Pieces, 1 opened (5 in stock in all)", for a Grocy label of one package. */
+function packageText(p: StockProduct): string {
+  if (p.amount <= 0) return 'This package is used up';
+  const parts = [`This package: ${amountText(p, p.amount)}`];
+  if (p.amount_opened > 0) parts.push(`${qty(p.amount_opened)} opened`);
+  const all = p.product_amount != null && p.product_amount > p.amount ? ` (${qty(p.product_amount)} in stock in all)` : '';
+  return parts.join(', ') + all;
 }
 
 export function dueText(p: StockProduct): string | null {

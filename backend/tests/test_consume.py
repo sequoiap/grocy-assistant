@@ -124,18 +124,53 @@ def test_a_pack_barcode_offers_the_whole_pack(authed, grocy):
     assert product["pack_amount"] == 6 and product["quick_consume_amount"] == 1
 
 
-def test_grocycode_label_of_one_stock_entry(authed, grocy):
-    milk = grocy.add_product("Whole Milk")
-    grocy.stock[milk] = 2
-    product = _scan(authed, f"grcy:p:{milk}:65a1b2c3d4e5f").json()
+def test_grocycode_label_of_one_package(authed, grocy):
+    chili = grocy.add_product("Leftover Chili")
+    grocy.stock[chili] = 5
+    # One container on its own, and the four from another cook-up. Opening part of a
+    # package splits it into rows that keep its stock_id.
+    grocy.entries[chili] = [
+        {"stock_id": "65a1b2c3d4e5f", "amount": 1, "open": 1, "best_before_date": "2026-11-25"},
+        {"stock_id": "65a1b2c3d4e5f", "amount": 1, "open": 0, "best_before_date": "2026-11-25"},
+        {"stock_id": "77ffee0011223", "amount": 3, "open": 0, "best_before_date": "2026-12-20"},
+    ]
+    product = _scan(authed, f"grcy:p:{chili}:65a1b2c3d4e5f").json()
     assert product["stock_entry_id"] == "65a1b2c3d4e5f"
+    assert (product["amount"], product["amount_opened"]) == (2, 1)
+    assert (product["product_amount"], product["next_due_date"]) == (5, "2026-11-25")
 
-    r = authed.post(
-        f"/api/stock/products/{milk}/consume",
-        json={"amount": 1, "stock_entry_id": product["stock_entry_id"]},
-    )
+    # More than the package holds is refused here: Grocy itself would check it against
+    # the whole product's 5, book only the package's 2, and still answer success.
+    body = {"amount": 3, "stock_entry_id": "65a1b2c3d4e5f"}
+    r = authed.post(f"/api/stock/products/{chili}/consume", json=body)
+    assert r.status_code == 409 and r.json()["detail"] == "This package holds only 2 Pieces."
+    body = {"amount": 2, "stock_entry_id": "65a1b2c3d4e5f"}
+    r = authed.post(f"/api/stock/products/{chili}/open", json=body)
+    assert r.status_code == 409 and "Only 1 Piece of this package is unopened" in r.text
+    assert grocy.stock_actions == []
+
+    body = {"amount": 2, "stock_entry_id": "65a1b2c3d4e5f"}
+    r = authed.post(f"/api/stock/products/{chili}/consume", json=body)
     assert r.status_code == 200
     assert grocy.stock_actions[-1]["stock_entry_id"] == "65a1b2c3d4e5f"
+    assert r.json()["product"]["product_amount"] is None  # the whole product again
+    assert r.json()["product"]["amount"] == 3
+
+    # The label of a package that's all used up.
+    product = _scan(authed, f"grcy:p:{chili}:65a1b2c3d4e5f").json()
+    assert (product["amount"], product["product_amount"]) == (0, 3)
+    assert product["next_due_date"] is None
+    r = authed.post(f"/api/stock/products/{chili}/consume", json=body | {"amount": 1})
+    assert r.status_code == 409 and r.json()["detail"] == "This package is used up."
+
+
+def test_a_product_that_is_never_opened(authed, grocy):
+    salt = grocy.add_product("Salt", disable_open=1)
+    grocy.stock[salt] = 1
+    assert _scan(authed, f"grcy:p:{salt}").json()["can_open"] is False
+    r = authed.post(f"/api/stock/products/{salt}/open", json={"amount": 1})
+    assert r.status_code == 409 and "never be opened" in r.json()["detail"]
+    assert grocy.stock_actions == []
 
 
 def test_unknown_barcode_and_a_product_none_is_left_of(authed, grocy):

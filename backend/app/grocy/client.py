@@ -431,6 +431,10 @@ class GrocyClient:
         """Every product with stock, as Grocy has it this moment (not the snapshot)."""
         return await self._request("GET", "/stock") or []
 
+    async def product_stock_entries(self, product_id: int) -> list[dict]:
+        """The product's stock entries (its packages), each with its `stock_id`."""
+        return await self._request("GET", f"/stock/products/{product_id}/entries") or []
+
     async def product_details(self, product_id: int) -> dict:
         return await self._request("GET", f"/stock/products/{product_id}") or {}
 
