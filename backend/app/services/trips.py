@@ -358,12 +358,17 @@ def receipt_out(receipt: Receipt, trip: Trip, md: MasterData, learned: dict) -> 
     )
 
 
-def trip_summary(trip: Trip) -> TripSummary:
+def trip_summary(trip: Trip, md: MasterData | None = None) -> TripSummary:
     totals = [r.total for r in trip.receipts if r.total is not None]
+    # Where a receipt is tied to a Grocy store, that store's name is what people
+    # chose to call it; the name read off the receipt is often garbled OCR.
+    grocy_names = {int(s["id"]): s.get("name") for s in md.stores} if md else {}
     stores: list[str] = []
     for r in trip.receipts:
-        if r.store_name and r.store_name not in stores:
-            stores.append(r.store_name)
+        grocy_name = grocy_names.get(r.shopping_location_id) if r.shopping_location_id else None
+        name = grocy_name or r.store_name
+        if name and name not in stores:
+            stores.append(name)
     return TripSummary(
         id=trip.id,
         name=trip.name,
@@ -385,7 +390,7 @@ def trip_out(db: Session, trip: Trip, md: MasterData, ai_available: bool) -> Tri
     learned = learned_index_for_trip(db, trip)
     items = [item_out(i, trip, md) for i in trip.items]
     return TripOut(
-        **trip_summary(trip).model_dump(),
+        **trip_summary(trip, md).model_dump(),
         items=items,
         receipts=[receipt_out(r, trip, md, learned) for r in trip.receipts],
         processing=any(r.status == "processing" for r in trip.receipts),

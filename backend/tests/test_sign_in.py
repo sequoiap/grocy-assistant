@@ -434,7 +434,7 @@ def test_the_key_check_only_asks_about_people_using_the_app(authed, grocy, monke
 
     authed.app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(watching))
 
-    authed.get("/api/trips")
+    authed.get("/api/auth/me")
     check_keys(authed)
     assert seen == ["/grocy/api/user"]
 
