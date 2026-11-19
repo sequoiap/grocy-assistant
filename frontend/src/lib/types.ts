@@ -317,3 +317,46 @@ export interface SubmitResult {
   remaining: number;
   trip: TripOut;
 }
+
+// --- consuming and opening stock -----------------------------------------------
+
+/** A product as it stands in Grocy right now. Amounts are in its stock unit. */
+export interface StockProduct {
+  id: number;
+  name: string;
+  /** In stock (with sub-products, for a parent product). */
+  amount: number;
+  amount_opened: number;
+  /** Stock unit, singular ("Piece") and plural ("Pieces"). */
+  unit: string;
+  unit_plural: string;
+  /** ISO date, "never", or null when nothing is in stock. */
+  next_due_date: string | null;
+  /** The product's default location. */
+  location: string | null;
+  /** What one tap consumes or opens by default (Grocy's quick consume/open amount). */
+  quick_consume_amount: number;
+  quick_open_amount: number;
+  /** Whether fractional amounts make sense. */
+  allow_partial: boolean;
+  /** The scanned barcode stands for this much (a pack of 6, say). */
+  pack_amount: number | null;
+  /** Scanned from a Grocycode label of one stock entry: only that entry is used. */
+  stock_entry_id: string | null;
+  /** Weighed in its container; consuming it is left to Grocy itself. */
+  tare_weight_handling: boolean;
+}
+
+export interface StockActionIn {
+  amount: number;
+  stock_entry_id?: string | null;
+  /** Consume only: it was thrown out, not eaten. */
+  spoiled?: boolean;
+}
+
+export interface StockActionOut {
+  /** Grocy's transaction, for undoing the action. */
+  transaction_id: string | null;
+  /** The product after the action. */
+  product: StockProduct;
+}

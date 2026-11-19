@@ -64,6 +64,15 @@ phone as its scanner:
   product's usual shelf life, as Grocy would give it. Stock is booked as an
   inventory correction, not a purchase. Counted amounts are added to what Grocy
   already has, and the app warns when Grocy already holds some of a product.
+- **Consuming and opening** what's already at home, without Grocy's web
+  interface: choose *Consume or open* on the home screen (or long-press the installed
+  app's icon), then scan the barcode or a Grocy label, or search what's in stock
+  by name for things whose packaging is long gone. Pick how much, then *Consume*
+  or *Open*. Ticking "it went bad" logs it as spoiled instead. Scanning the same
+  barcode again while it's open counts one more. It is booked in Grocy straight
+  away, the soonest-due stock first (or exactly the package a Grocy label names),
+  and the last few actions can be undone from the same screen. Products weighed
+  in their container (Grocy's tare weight handling) are left to Grocy itself.
 - **The camera can be switched off** on the scan screen while you walk to the
   next cupboard. It stays off until you turn it back on.
 - **On a big screen** the review step can show everything as one editable table:
@@ -278,7 +287,7 @@ by row, which is the quickest way to see why one misparsed. API docs are at
 
 ```
 backend/app/
-  routers/      HTTP API (auth, settings, trips, Grocy metadata)
+  routers/      HTTP API (auth, settings, trips, Grocy metadata, consuming stock)
   services/     matching, trip resolution, receipt processing, submit/undo
   receipts/     OCR, row reconstruction, store parsers, confidence scoring
   ai/           optional providers (Anthropic, OpenAI-compatible)

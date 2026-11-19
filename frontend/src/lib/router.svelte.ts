@@ -60,6 +60,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'login' }
   | { name: 'settings' }
+  | { name: 'consume' }
   | { name: 'trip'; id: number; step: TripStep }
   | { name: 'notfound' };
 
@@ -70,6 +71,7 @@ export function match(path: string): Route {
   if (p === '/') return { name: 'home' };
   if (p === '/login') return { name: 'login' };
   if (p === '/settings') return { name: 'settings' };
+  if (p === '/consume') return { name: 'consume' };
   const m = /^\/trips\/(\d+)(?:\/(scan|receipts|review))?$/.exec(p);
   if (m) return { name: 'trip', id: Number(m[1]), step: (m[2] as TripStep) ?? null };
   return { name: 'notfound' };

@@ -12,7 +12,7 @@ from .config import ConfigError, get_config
 from .db import init_db, session_scope
 from .errors import GROCY_UNREACHABLE, ApiError, account_invalid
 from .grocy.client import GrocyError, GrocyUnreachable, grocy_timeout, shared_http_client
-from .routers import auth, grocy_meta, settings, trips
+from .routers import auth, grocy_meta, settings, stock, trips
 from .security import SESSION_COOKIE
 from .services.accounts import check_active_keys, session_user, sign_out_everywhere
 from .services.receipts import fail_interrupted
@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
             return JSONResponse(body, status_code=503)
         return JSONResponse({"detail": exc.message}, status_code=502)
 
-    for router in (auth.router, settings.router, grocy_meta.router, trips.router):
+    for router in (auth.router, settings.router, grocy_meta.router, trips.router, stock.router):
         app.include_router(router)
 
     @app.get("/api/health", include_in_schema=False)

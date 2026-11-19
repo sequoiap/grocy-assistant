@@ -14,6 +14,9 @@ import type {
   ReceiptPatch,
   ScanOut,
   SettingsOut,
+  StockActionIn,
+  StockActionOut,
+  StockProduct,
   StatusOut,
   SubmitResult,
   TestResult,
@@ -280,6 +283,15 @@ export const api = {
   rematch: (id: number, useAI = false) => post<TripOut>(`/trips/${id}/rematch${useAI ? '?use_ai=true' : ''}`),
   submit: (id: number) => post<SubmitResult>(`/trips/${id}/submit`),
   undo: (id: number) => post<TripOut>(`/trips/${id}/undo`),
+
+  // stock: consuming and opening what's at home, straight in Grocy
+  stock: () => get<StockProduct[]>('/stock'),
+  stockScan: (barcode: string) => post<StockProduct>('/stock/scan', { barcode }),
+  consume: (productId: number, body: StockActionIn) =>
+    post<StockActionOut>(`/stock/products/${productId}/consume`, body),
+  openStock: (productId: number, body: StockActionIn) =>
+    post<StockActionOut>(`/stock/products/${productId}/open`, body),
+  undoStock: (transactionId: string) => post<void>('/stock/undo', { transaction_id: transactionId }),
 };
 
 /** Human message for anything thrown by the client. */
