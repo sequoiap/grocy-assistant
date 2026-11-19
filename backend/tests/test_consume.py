@@ -63,18 +63,55 @@ def test_spoiled_and_more_than_there_is(authed, grocy):
     assert grocy.stock_actions[-1]["spoiled"] is True
 
 
-def test_whole_units_and_weighed_containers(authed, grocy):
-    eggs = grocy.add_product("Eggs", "0012345678905")
-    flour = grocy.add_product(
-        "Flour", allow_partial_units_in_stock=1, enable_tare_weight_handling=1
-    )
-    grocy.stock |= {eggs: 12, flour: 900}
+def test_part_of_a_unit_and_weighed_containers(authed, grocy):
+    # Grocy 4 allows decimal amounts for every product; its old per-product
+    # "allow partial units" option is still in the table but no longer read.
+    flour = grocy.add_product("Flour", allow_partial_units_in_stock=0)
+    sugar = grocy.add_product("Sugar", enable_tare_weight_handling=1)
+    grocy.stock |= {flour: 2, sugar: 900}
 
-    r = authed.post(f"/api/stock/products/{eggs}/consume", json={"amount": 1.5})
-    assert r.status_code == 422 and "whole pieces" in r.json()["detail"]
-    r = authed.post(f"/api/stock/products/{flour}/consume", json={"amount": 100})
+    r = authed.post(f"/api/stock/products/{flour}/consume", json={"amount": 0.5})
+    assert r.status_code == 200, r.text
+    assert r.json()["product"]["amount"] == 1.5
+    assert "allow_partial" not in r.json()["product"]
+
+    r = authed.post(f"/api/stock/products/{sugar}/consume", json={"amount": 100})
     assert r.status_code == 409 and "Grocy itself" in r.json()["detail"]
+    assert len(grocy.stock_actions) == 1
+
+
+def test_undo_an_open_and_refuse_ids_that_are_not_grocys(authed, grocy):
+    milk = grocy.add_product("Whole Milk", MILK)
+    grocy.stock[milk] = 2
+    opened = authed.post(f"/api/stock/products/{milk}/open", json={"amount": 1}).json()
+    assert opened["product"]["amount_opened"] == 1
+
+    r = authed.post("/api/stock/undo", json={"transaction_id": opened["transaction_id"]})
+    assert r.status_code == 204
+    assert _scan(authed, MILK).json()["amount_opened"] == 0
+
+    # Goes into a Grocy URL path, so only Grocy's own kind of id gets through.
+    before = len(grocy.requests)
+    for bad in ("../../objects/products", "abc?x=1", "a/b", ""):
+        r = authed.post("/api/stock/undo", json={"transaction_id": bad})
+        assert r.status_code == 422, bad
+    assert len(grocy.requests) == before
+
+
+def test_not_allowed_to_change_stock(authed, grocy):
+    milk = grocy.add_product("Whole Milk", MILK)
+    grocy.stock[milk] = 1
+    grocy.forbid_stock_changes = True
+    r = authed.post(f"/api/stock/products/{milk}/consume", json={"amount": 1})
+    assert r.status_code == 403 and "isn't allowed" in r.json()["detail"]
     assert grocy.stock_actions == []
+
+
+def test_a_label_for_a_product_grocy_does_not_have(authed, grocy):
+    r = _scan(authed, "grcy:p:99")
+    assert r.status_code == 404 and r.json()["detail"] == "Grocy has no such product."
+    r = _scan(authed, "grcy:p:milk")
+    assert r.status_code == 404
 
 
 def test_a_pack_barcode_offers_the_whole_pack(authed, grocy):

@@ -337,8 +337,6 @@ export interface StockProduct {
   /** What one tap consumes or opens by default (Grocy's quick consume/open amount). */
   quick_consume_amount: number;
   quick_open_amount: number;
-  /** Whether fractional amounts make sense. */
-  allow_partial: boolean;
   /** The scanned barcode stands for this much (a pack of 6, say). */
   pack_amount: number | null;
   /** Scanned from a Grocycode label of one stock entry: only that entry is used. */

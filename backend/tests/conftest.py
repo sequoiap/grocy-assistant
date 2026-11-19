@@ -48,6 +48,7 @@ class FakeGrocy:
         self.stock: dict[int, float] = {}  # stock there before any booking: product -> amount
         self.fail_create: set[str] = set()  # object tables whose POST answers 400
         self.stock_actions: list[dict] = []  # consume and open calls, in order
+        self.forbid_stock_changes = False  # consume and open answer 403
 
         self.users: dict[int, dict] = {}
         self.api_keys: list[dict] = []
@@ -349,6 +350,8 @@ class FakeGrocy:
             )
         if m := re.fullmatch(r"/stock/products/(\d+)/(consume|open)", path):
             pid, action = int(m[1]), m[2]
+            if self.forbid_stock_changes:
+                return httpx.Response(403, json={"error_message": "Permission denied"})
             body = json.loads(request.content)
             amount = self._amounts().get(pid, 0)
             limit = amount if action == "consume" else amount - self._opened(pid)

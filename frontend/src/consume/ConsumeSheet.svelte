@@ -32,14 +32,11 @@
     }
   });
 
-  const step = $derived(product?.allow_partial ? product.quick_consume_amount || 1 : 1);
   const unopened = $derived(product ? tidy(product.amount - product.amount_opened) : 0);
   const blocked = $derived(!product || product.amount <= 0 || product.tare_weight_handling);
   const problem = $derived.by((): string | null => {
     if (!product || blocked) return null;
     if (!(amount > 0)) return 'Enter how much.';
-    if (!product.allow_partial && !Number.isInteger(amount))
-      return `${product.name} is counted in whole ${product.unit_plural.toLowerCase() || 'units'}.`;
     if (amount > product.amount) return `There's only ${amountText(product, product.amount)} in stock.`;
     return null;
   });
@@ -62,10 +59,11 @@
     return out;
   });
 
+  // − and + move by one; a part of one (half a bag) is typed in. Never down to nothing.
   function bump(delta: number) {
     if (!product) return;
     const next = tidy((Number.isFinite(amount) ? amount : 0) + delta);
-    amount = Math.min(product.amount, Math.max(step, next));
+    if (next > 0) amount = Math.min(product.amount, next);
   }
 
   async function act(action: StockAction) {
@@ -115,19 +113,19 @@
         <div class="amount">
           <span class="label" id="amount-label">How much</span>
           <div class="stepper" role="group" aria-labelledby="amount-label">
-            <button type="button" aria-label="Less" disabled={amount <= step} onclick={() => bump(-step)}>
+            <button type="button" aria-label="Less" disabled={!(amount > 1)} onclick={() => bump(-1)}>
               <Icon name="minus" />
             </button>
             <input
               type="number"
-              inputmode={product.allow_partial ? 'decimal' : 'numeric'}
-              min={step}
+              inputmode="decimal"
+              min="0"
               max={product.amount}
-              step={product.allow_partial ? 'any' : 1}
+              step="any"
               bind:value={amount}
               aria-labelledby="amount-label"
             />
-            <button type="button" aria-label="More" disabled={amount >= product.amount} onclick={() => bump(step)}>
+            <button type="button" aria-label="More" disabled={amount >= product.amount} onclick={() => bump(1)}>
               <Icon name="plus" />
             </button>
           </div>

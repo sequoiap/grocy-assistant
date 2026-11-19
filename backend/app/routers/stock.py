@@ -93,14 +93,19 @@ def _stock_product(
         location=_location(md, product.get("location_id")),
         quick_consume_amount=quick,
         quick_open_amount=_num(product.get("quick_open_amount"), quick) or quick,
-        allow_partial=bool(int(product.get("allow_partial_units_in_stock") or 0)),
         tare_weight_handling=bool(int(product.get("enable_tare_weight_handling") or 0)),
     )
 
 
 async def _product_now(grocy: GrocyClient, md: MasterData, product_id: int) -> StockProduct:
     """One product as Grocy has it this moment (not from the cached snapshot)."""
-    details = await _call(grocy.product_details(product_id))
+    try:
+        details = await _call(grocy.product_details(product_id))
+    except ApiError as exc:
+        # Grocy answers an unknown product id with a 400 ("Product does not exist").
+        if exc.status == 409:
+            raise ApiError(404, "Grocy has no such product.") from None
+        raise
     product = details.get("product") or md.products.get(product_id)
     if not product:
         raise ApiError(404, "Grocy has no such product.")
@@ -178,13 +183,11 @@ async def scan(body: StockScanIn, grocy: GrocyClient = Depends(get_grocy)):
     return product
 
 
-def _check(product: StockProduct, body: StockActionIn) -> None:
+def _check(product: StockProduct) -> None:
     if product.tare_weight_handling:
         raise ApiError(
             409, f"{product.name} is weighed in its container. Consume it in Grocy itself."
         )
-    if not product.allow_partial and body.amount != int(body.amount):
-        raise ApiError(422, f"{product.name} is counted in whole {product.unit_plural.lower()}.")
 
 
 def _transaction(rows) -> str | None:
@@ -197,7 +200,7 @@ def _transaction(rows) -> str | None:
 @router.post("/products/{product_id}/consume", response_model=StockActionOut)
 async def consume(product_id: int, body: StockActionIn, grocy: GrocyClient = Depends(get_grocy)):
     md = await _md(grocy)
-    _check(await _product_now(grocy, md, product_id), body)
+    _check(await _product_now(grocy, md, product_id))
     rows = await _call(
         grocy.consume_stock(
             product_id, amount=body.amount, spoiled=body.spoiled, stock_entry_id=body.stock_entry_id
@@ -211,7 +214,7 @@ async def consume(product_id: int, body: StockActionIn, grocy: GrocyClient = Dep
 @router.post("/products/{product_id}/open", response_model=StockActionOut)
 async def open_stock(product_id: int, body: StockActionIn, grocy: GrocyClient = Depends(get_grocy)):
     md = await _md(grocy)
-    _check(await _product_now(grocy, md, product_id), body)
+    _check(await _product_now(grocy, md, product_id))
     rows = await _call(
         grocy.open_stock(product_id, amount=body.amount, stock_entry_id=body.stock_entry_id)
     )

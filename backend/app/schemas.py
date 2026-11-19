@@ -389,8 +389,6 @@ class StockProduct(BaseModel):
     # What one tap consumes or opens by default (Grocy's "quick consume/open amount").
     quick_consume_amount: float
     quick_open_amount: float
-    # Whether fractional amounts make sense (Grocy's "allow partial units in stock").
-    allow_partial: bool
     # The scanned barcode stands for this much (a pack of 6, say); null otherwise.
     pack_amount: float | None = None
     # A Grocycode label of one particular stock entry: only that entry is used.
@@ -416,4 +414,5 @@ class StockActionOut(BaseModel):
 
 
 class StockUndoIn(BaseModel):
-    transaction_id: str = Field(min_length=1, max_length=64)
+    # Grocy's ids are uniqid() hex; anything else would be steering the URL it goes into.
+    transaction_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9]+$")

@@ -29,7 +29,6 @@
     transactionId: string | null;
     undone: boolean;
     undoing: boolean;
-    toast: number | null;
   }
 
   let mode = $state<'scan' | 'search'>(lastMode);
@@ -88,8 +87,7 @@
     if (selected) {
       // Scanning the same thing again while it's open counts one more of it.
       if (code === selectedCode && amount < selected.amount) {
-        const step = selected.allow_partial ? selected.quick_consume_amount || 1 : 1;
-        amount = Math.min(selected.amount, tidy(amount + step));
+        amount = Math.min(selected.amount, tidy(amount + 1));
         flashKey++;
         buzz(35);
         beep('repeat');
@@ -104,7 +102,9 @@
     try {
       const p = await api.stockScan(code);
       last = { kind: 'ok', text: `${p.name}: ${stockText(p).toLowerCase()}` };
-      choose(p, code);
+      // Something was picked meanwhile (from the list, or a quicker scan): never swap
+      // the product under someone's thumb.
+      if (!selected) choose(p, code);
     } catch (err) {
       last = { kind: 'error', text: errorMessage(err) };
       buzz([60, 60, 60]);
@@ -127,16 +127,20 @@
       transactionId: result.transaction_id,
       undone: false,
       undoing: false,
-      toast: null,
     };
-    entry.toast = toasts.success(
-      entry.text,
-      entry.transactionId ? { label: 'Undo', run: () => void undo(entry.key) } : undefined,
+    const { transactionId, text } = entry;
+    // The toast carries what it needs to undo, so it works after its row has left the list.
+    const toast = toasts.success(
+      text,
+      transactionId ? { label: 'Undo', run: () => void undo(transactionId, text) } : undefined,
     );
+    if (transactionId) toastFor.set(transactionId, toast);
     // Only the last few: older ones can still be undone in Grocy's stock journal.
     done = [entry, ...done].slice(0, 3);
     last = null;
     patchStock(p);
+    // Then the whole list: consuming a parent product can use up its sub-products' stock.
+    void load();
   }
 
   /** Puts a product's new amounts into the list without reloading all of it. */
@@ -150,20 +154,31 @@
       );
   }
 
-  async function undo(key: number) {
-    const entry = done.find((d) => d.key === key);
-    if (!entry || !entry.transactionId || entry.undone || entry.undoing) return;
-    entry.undoing = true;
+  // Transactions undone or being undone, whether from a row or a toast.
+  const undoing = new Set<string>();
+  // The confirmation toast of each transaction, to take away once it's undone.
+  const toastFor = new Map<string, number>();
+
+  async function undo(transactionId: string, text: string) {
+    if (undoing.has(transactionId)) return;
+    undoing.add(transactionId);
+    const entry = () => done.find((d) => d.transactionId === transactionId);
+    const row = entry();
+    if (row) row.undoing = true;
     try {
-      await api.undoStock(entry.transactionId);
-      entry.undone = true;
-      if (entry.toast !== null) toasts.dismiss(entry.toast);
-      toasts.show(`Undone: ${entry.text}`);
+      await api.undoStock(transactionId);
+      const now = entry();
+      if (now) now.undone = true;
+      const toast = toastFor.get(transactionId);
+      if (toast !== undefined) toasts.dismiss(toast);
+      toasts.show(`Undone: ${text}`);
       void load();
     } catch (err) {
+      undoing.delete(transactionId);
       reportError(err);
     } finally {
-      entry.undoing = false;
+      const now = entry();
+      if (now) now.undoing = false;
     }
   }
 
@@ -226,7 +241,7 @@
                 <Icon name={d.undone ? 'undo' : 'check'} size={18} />
                 <span class="d-text">{d.undone ? `Undone: ${d.text}` : d.text}</span>
                 {#if d.transactionId && !d.undone}
-                  <button type="button" class="btn ghost small" disabled={d.undoing} onclick={() => undo(d.key)}>
+                  <button type="button" class="btn ghost small" disabled={d.undoing} onclick={() => d.transactionId && undo(d.transactionId, d.text)}>
                     {#if d.undoing}<span class="spinner"></span>{/if} Undo
                   </button>
                 {/if}
