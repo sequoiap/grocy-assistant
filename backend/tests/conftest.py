@@ -38,6 +38,7 @@ class FakeGrocy:
             ],
             "product_groups": [],
             "quantity_unit_conversions_resolved": [],
+            "stock_log": [],
         }
         self.bookings: list[dict] = []
         self.undone: list[str] = []
@@ -52,6 +53,7 @@ class FakeGrocy:
         # product -> its packages: {"stock_id", "amount", "open", "best_before_date"}.
         # Only for tests about one package; the amounts in `stock` still count in all.
         self.entries: dict[int, list[dict]] = {}
+        self.entry_edits: list[dict] = []  # PUT /stock/entry bodies, in order
 
         self.users: dict[int, dict] = {}
         self.api_keys: list[dict] = []
@@ -136,6 +138,24 @@ class FakeGrocy:
                 }
             )
         return pid
+
+    def _file_addition(self, pid: int, body: dict) -> str:
+        """Files added stock into an entry, as Grocy 4.7.1 does: into an existing
+        unopened entry whose details all match, else into a new one. Returns stock_id."""
+        rows = self.entries.setdefault(pid, [])
+        details = {
+            "best_before_date": body.get("best_before_date"),
+            "price": body.get("price"),
+            "location_id": body.get("location_id"),
+            "shopping_location_id": body.get("shopping_location_id"),
+        }
+        for e in rows:
+            if not e.get("open") and all(e.get(k) == v for k, v in details.items()):
+                e["amount"] += body["amount"]
+                return e["stock_id"]
+        n = sum(len(r) for r in self.entries.values()) + 1
+        rows.append({"id": n, "stock_id": f"s{n}", "amount": body["amount"], "open": 0, **details})
+        return f"s{n}"
 
     def _product(self, pid: int) -> dict | None:
         return next((p for p in self.tables["products"] if p["id"] == pid), None)
@@ -270,7 +290,11 @@ class FakeGrocy:
         if m := re.fullmatch(r"/objects/(\w+)", path):
             table = self.tables.setdefault(m[1], [])
             if request.method == "GET":
-                return httpx.Response(200, json=table)
+                rows = table
+                for cond in request.url.params.get_list("query[]"):
+                    key, _, value = cond.partition("=")
+                    rows = [r for r in rows if str(r.get(key)) == value]
+                return httpx.Response(200, json=rows)
             if m[1] in self.fail_create:
                 return httpx.Response(400, json={"error_message": f"{m[1]} is broken"})
             row = {"id": len(table) + 1, "active": 1, **json.loads(request.content)}
@@ -308,15 +332,48 @@ class FakeGrocy:
                 self.fail_add_after[pid] -= 1
             body = json.loads(request.content)
             tid = f"tx{len(self.bookings) + 1}"
+            stock_id = self._file_addition(pid, body)
             self.bookings.append(
                 {"product_id": pid, "transaction_id": tid, "booked_by": user["username"], **body}
             )
-            return httpx.Response(200, json=[{"transaction_id": tid}])
+            log = self.tables["stock_log"]
+            row = {
+                "id": len(log) + 1,
+                "product_id": pid,
+                "transaction_id": tid,
+                "transaction_type": body.get("transaction_type", "purchase"),
+                "stock_id": stock_id,
+                "amount": body["amount"],
+                "undone": 0,
+            }
+            log.append(row)
+            return httpx.Response(200, json=[row])
         if m := re.fullmatch(r"/stock/transactions/(\w+)/undo", path):
             if m[1] in self.fail_undo:
                 return httpx.Response(400, json={"error_message": "Undo is broken"})
             self.undone.append(m[1])
+            # Like Grocy 4.7.1: undoing an addition deletes every row of its stock entry,
+            # including stock that an earlier addition with the same details put there.
+            for row in self.tables["stock_log"]:
+                if row["transaction_id"] == m[1] and not row["undone"]:
+                    row["undone"] = 1
+                    rows = self.entries.get(row["product_id"], [])
+                    gone = sum(e["amount"] for e in rows if e["stock_id"] == row["stock_id"])
+                    rows[:] = [e for e in rows if e["stock_id"] != row["stock_id"]]
+                    extra = gone - row["amount"]  # what wasn't this transaction's
+                    pid = row["product_id"]
+                    self.stock[pid] = self.stock.get(pid, 0) - extra
             return httpx.Response(204)
+        if m := re.fullmatch(r"/stock/entry/(\d+)", path):
+            body = json.loads(request.content)
+            for pid, rows in self.entries.items():
+                for e in rows:
+                    if e.get("id") == int(m[1]):
+                        self.entry_edits.append({"id": e["id"], **body})
+                        self.stock[pid] = self.stock.get(pid, 0) - (e["amount"] - body["amount"])
+                        e["amount"] = body["amount"]
+                        return httpx.Response(200, json=[{"transaction_id": "edit"}])
+            return httpx.Response(400, json={"error_message": "Stock entry does not exist"})
         if path == "/stock":
             rows = [
                 {
