@@ -144,10 +144,11 @@ def _booked(item: TripItem) -> list[str]:
 
 async def _take_back(db: Session, grocy: GrocyClient, item: TripItem) -> None:
     """Undo whatever this item has booked, newest first, recording each as it goes.
-    Raises on the first one Grocy refuses, leaving the rest recorded for next time."""
+    Raises on the first one Grocy refuses, leaving the rest recorded for next time.
+    Stock that Grocy merged these bookings into stays (see take_back_addition)."""
     ids = _booked(item)
     while ids:
-        await grocy.undo_transaction(ids[-1])
+        await grocy.take_back_addition(ids[-1])
         ids.pop()
         item.transaction_ids = list(ids)
         item.transaction_id = ids[0] if ids else None

@@ -427,6 +427,55 @@ class GrocyClient:
     async def undo_transaction(self, transaction_id: str) -> None:
         await self._request("POST", f"/stock/transactions/{transaction_id}/undo")
 
+    async def take_back_addition(self, transaction_id: str) -> None:
+        """Takes back a stock addition made with `add_stock`, and only that.
+
+        Grocy adds new stock to an existing stock entry when every detail matches (due
+        date, price, location, purchase date...), so both share one stock_id. Undoing
+        the addition's transaction then deletes the whole entry, including the stock
+        that was there before (Grocy 4.7.1). So when the entry still holds more than
+        this transaction added, it is shrunk by that amount instead. Otherwise the
+        transaction is undone as before."""
+        rows = (
+            await self._request(
+                "GET", "/objects/stock_log", params={"query[]": f"transaction_id={transaction_id}"}
+            )
+            or []
+        )
+        added = [r for r in rows if not int(r.get("undone") or 0)]
+        if len(added) == 1 and added[0].get("stock_id") and _num(added[0].get("amount")) > 0:
+            row = added[0]
+            amount = _num(row["amount"])
+            entries = [
+                e
+                for e in await self._request(
+                    "GET", f"/stock/products/{int(row['product_id'])}/entries"
+                )
+                or []
+                if e.get("stock_id") == row["stock_id"]
+            ]
+            if sum(_num(e.get("amount")) for e in entries) > amount + 1e-9:
+                # Opening part of an entry splits it into rows that keep its stock_id;
+                # take from an unopened row that can absorb the whole amount.
+                fits = [e for e in entries if _num(e.get("amount")) > amount + 1e-9]
+                fits.sort(key=lambda e: int(e.get("open") or 0))
+                if fits:
+                    await self._shrink_entry(fits[0], amount)
+                    return
+        await self.undo_transaction(transaction_id)
+
+    async def _shrink_entry(self, entry: dict, by: float) -> None:
+        body = {
+            "amount": round(_num(entry["amount"]) - by, 4),
+            "best_before_date": entry.get("best_before_date"),
+            "purchased_date": entry.get("purchased_date"),
+            "price": entry.get("price"),
+            "open": bool(int(entry.get("open") or 0)),
+            "location_id": entry.get("location_id"),
+            "shopping_location_id": entry.get("shopping_location_id"),
+        }
+        await self._request("PUT", f"/stock/entry/{int(entry['id'])}", json=body)
+
     async def current_stock(self) -> list[dict]:
         """Every product with stock, as Grocy has it this moment (not the snapshot)."""
         return await self._request("GET", "/stock") or []
@@ -559,6 +608,13 @@ class GrocyClient:
                 raise
             raw["stock"] = None
         return raw
+
+
+def _num(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _missing_feature(exc: GrocyError) -> bool:
